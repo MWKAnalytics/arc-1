@@ -33,6 +33,7 @@ import { AdtHttpClient, type AdtHttpConfig, type AdtResponse } from './http.js';
 import type { AdtRequestOptions } from './http-deadline.js';
 import { AdtPackageHierarchyResolver, type PackageHierarchyResolver } from './package-hierarchy.js';
 import { canonicalRevisionSourcePath } from './path-safety.js';
+import { clampUrlLimit } from './result-limits.js';
 import { checkOperation, OperationType, type SafetyConfig } from './safety.js';
 import { Semaphore } from './semaphore.js';
 import { buildTableQuerySql, clampPreviewRows, executeDataPreviewStatements } from './table-query.js';
@@ -185,18 +186,6 @@ function tadirObjectUrl(tadirType: string, name: string): string {
       // empty URI so callers know not to navigate; the row still surfaces.
       return '';
   }
-}
-
-/** Floor + clamp a caller-supplied result limit to [1, 1000] before it is interpolated into an
- *  ADT search/listing URL query param (`maxResults=`, `rowNumber=`). Non-finite input — NaN from a
- *  coerced non-numeric, or undefined — falls back to the caller's default, so no float or
- *  out-of-range value ever reaches a SAP URL regardless of which tool supplied it. Mirrors
- *  `clampSearchResults` and diagnostics' `clampMaxResults`. The tool schemas advertise `maxResults`
- *  as `type: number` and SAPRead promises "clamped to [1, 1000]"; this is where that promise is
- *  kept (see docs/research/2026-06-12-maxresults-contract-asymmetry.md). */
-function clampUrlLimit(requested: number | undefined, fallback: number): number {
-  if (requested === undefined || !Number.isFinite(requested)) return fallback;
-  return Math.max(1, Math.min(1000, Math.floor(requested)));
 }
 
 /** The five source includes a class keeps its revisions under. */
@@ -1265,8 +1254,8 @@ export class AdtClient {
    *
    * @param packageName — DEVC name to inspect
    * @param maxResults — soft cap on number of returned entries (default 200,
-   *                     clamped to [1, 1000]). Larger packages may be silently
-   *                     truncated by SAP at this limit; raise it if needed.
+   *                     clamped to [1, 1000]). This array API has no completeness
+   *                     metadata; SAPRead supplies it alongside these entries.
    * @returns array of `{ type, name, description, uri }` (URIs may be empty
    *          for objects that the workbench does not expose via ADT, e.g.
    *          some `IWMO`/`IWPR`/`SICF/TYP` entries).
