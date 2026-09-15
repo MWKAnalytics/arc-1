@@ -14,7 +14,7 @@ import { AdtClient, createClient, mockFetch } from './setup-undici-mock.js';
 
 const { handleToolCall } = await import('../../../src/handlers/dispatch.js');
 const { resetCachedFeatures, setCachedFeatures } = await import('../../../src/handlers/feature-cache.js');
-const { transliterateQuery, looksLikeFieldName } = await import('../../../src/handlers/search.js');
+const { handleSAPSearch, transliterateQuery, looksLikeFieldName } = await import('../../../src/handlers/search.js');
 
 function dataPreviewXml(column: string, values: string[]): string {
   return `<abap><values><COLUMNS><COLUMN><METADATA name="${column}"/><DATASET>${values
@@ -44,6 +44,57 @@ describe('SAPSearch / SAPQuery / SAPGit / SAPNavigate handlers', () => {
   });
 
   describe('SAPSearch', () => {
+    it.each([
+      ['clas/oc', 'CLAS/OC'],
+      ['ddls/df', 'DDLS/DF'],
+      ['ktd', 'SKTD'],
+      ['uiac', 'UIAC'],
+    ])('preserves real search subtypes and translates friendly aliases: %s', async (objectType, expected) => {
+      await handleToolCall(createClient(), DEFAULT_CONFIG, 'SAPSearch', { query: '*', objectType });
+      expect(new URL(String(mockFetch.mock.calls[0]?.[0])).searchParams.get('objectType')).toBe(expected);
+    });
+
+    it.each([false, true])('explains a rejected filter without retrying (minimalErrors=%s)', async (minimalErrors) => {
+      mockFetch.mockResolvedValue(mockResponse(406, 'private SAP diagnostic'));
+      const result = await handleToolCall(createClient(), { ...DEFAULT_CONFIG, minimalErrors }, 'SAPSearch', {
+        query: '*',
+        objectType: 'NOSUCH',
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('SAP rejected the object search with objectType="NOSUCH"');
+      expect(result.content[0].text).not.toContain('private SAP diagnostic');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['NOSUCH', undefined])('gives appropriate empty-result guidance for filter %s', async (objectType) => {
+      mockFetch.mockResolvedValue(mockResponse(200, '<objectReferences/>'));
+      const result = await handleToolCall(createClient(), DEFAULT_CONFIG, 'SAPSearch', { query: '*', objectType });
+      expect(result.isError).toBeUndefined();
+      if (objectType) {
+        expect(result.content[0].text).toContain('objectType="NOSUCH" was applied; omit it to search all types.');
+      } else {
+        expect(result.content[0].text).toContain('try Z* or Y*');
+      }
+    });
+
+    it('preserves authorization errors instead of misclassifying them as rejected filters', async () => {
+      const client = createClient();
+      const error = new AdtApiError('Forbidden', 403, '/sap/bc/adt/repository/informationsystem/search');
+      vi.spyOn(client, 'searchObject').mockRejectedValue(error);
+      await expect(handleSAPSearch(client, { query: '*', objectType: 'CLAS' })).rejects.toBe(error);
+    });
+
+    it('preserves and encodes a slash type without injecting query parameters', async () => {
+      await handleToolCall(createClient(), DEFAULT_CONFIG, 'SAPSearch', {
+        query: '*',
+        objectType: 'clas/oc&maxResults=999',
+        maxResults: 2,
+      });
+      const params = new URL(String(mockFetch.mock.calls[0]?.[0])).searchParams;
+      expect(params.get('objectType')).toBe('CLAS/OC&MAXRESULTS=999');
+      expect(params.getAll('maxResults')).toEqual(['2']);
+    });
+
     it('executes search', async () => {
       const result = await handleToolCall(createClient(), DEFAULT_CONFIG, 'SAPSearch', {
         query: 'ZCL_*',

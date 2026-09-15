@@ -1071,11 +1071,12 @@ export class AdtClient {
   // ─── Search Operations ─────────────────────────────────────────────
 
   /** Search for ABAP objects by name pattern */
-  async searchObject(query: string, maxResults = 100): Promise<AdtSearchResult[]> {
+  async searchObject(query: string, maxResults = 100, objectType?: string): Promise<AdtSearchResult[]> {
     checkOperation(this.safety, OperationType.Search, 'SearchObject');
     const limit = clampSearchResults(maxResults, 100);
+    const typeFilter = objectType ? `&objectType=${encodeURIComponent(objectType)}` : '';
     const resp = await this.http.get(
-      `/sap/bc/adt/repository/informationsystem/search?operation=quickSearch&query=${encodeURIComponent(query)}&maxResults=${limit}`,
+      `/sap/bc/adt/repository/informationsystem/search?operation=quickSearch&query=${encodeURIComponent(query)}&maxResults=${limit}${typeFilter}`,
     );
     return parseSearchResults(resp.body);
   }

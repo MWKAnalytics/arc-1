@@ -1330,6 +1330,9 @@ describe('AdtClient', () => {
     it('encodes special characters in search query', async () => {
       const client = createClient();
       await client.searchObject('/NAMESPACE/*', 5);
+      const params = new URL(String(mockFetch.mock.calls[0]?.[0])).searchParams;
+      expect(params.get('query')).toBe('/NAMESPACE/*');
+      expect(params.has('objectType')).toBe(false);
     });
   });
 

@@ -136,6 +136,12 @@ export function normalizeObjectType(type: string): string {
   return FRIENDLY_TYPE_ALIAS_MAP[normalized] ?? SLASH_TYPE_MAP[normalized] ?? normalized;
 }
 
+/** Object search accepts SAP slash subtypes; only friendly aliases may collapse. */
+export function normalizeSearchObjectType(type: string): string {
+  const normalized = type.trim().toUpperCase();
+  return FRIENDLY_TYPE_ALIAS_MAP[normalized] ?? normalized;
+}
+
 /** TABL subtypes that SAPWrite preserves (instead of collapsing to bare 'TABL' via
  *  SLASH_TYPE_MAP) so the create path can route TABL/DT → /ddic/tables and
  *  TABL/DS → /ddic/structures. See docs/plans/completed/2026-05-27-fix-tabl-ds-create-routing.md. */
@@ -308,12 +314,6 @@ export function normalizeTypeArgsForValidation(
                 : obj,
             )
           : cleaned.objects,
-      };
-    case 'SAPSearch':
-      return {
-        ...cleaned,
-        objectType:
-          cleaned.objectType === undefined ? undefined : normalizeObjectType(String(cleaned.objectType ?? '')),
       };
     case 'SAPNavigate':
       // Strict-schema clients fill in optional fields for unrelated actions (#360).
