@@ -39,13 +39,18 @@ const SOURCE_ALIAS_STOP_WORDS = new Set([
   'WITH',
 ]);
 
-/** ADT truncates a freestyle statement beyond this length before it parses it. */
-export const ADT_FREESTYLE_SQL_MAX_LENGTH = 255;
+/** Older ADT handlers truncate freestyle SQL beyond this length before parsing. */
+const LEGACY_ADT_FREESTYLE_SQL_MAX_LENGTH = 255;
 
 const HINT_SEPARATOR = '\n\nHint: ';
 
-function withHint(err: AdtApiError, hint: string): string {
-  return `${err.message}${HINT_SEPARATOR}${hint}`;
+interface ParserClassification {
+  message: string;
+  hint: string;
+}
+
+function withHint(err: AdtApiError, hint: string): ParserClassification {
+  return { message: `${err.message}${HINT_SEPARATOR}${hint}`, hint };
 }
 
 export function maskSqlStringLiterals(sql: string): string {
@@ -122,7 +127,11 @@ function findRowLimit(maskedSql: string): { syntax: string; rows?: string } | un
   return undefined;
 }
 
-function classifyParserHint(err: AdtApiError, sql: string, chunkingAttempted: boolean): string | undefined {
+function classifyParserHint(
+  err: AdtApiError,
+  sql: string,
+  chunkingAttempted: boolean,
+): ParserClassification | undefined {
   const maskedSql = maskSqlStringLiterals(sql);
   const fullJoin = /\bFULL(?:\s+OUTER)?\s+JOIN\b/i.test(maskedSql);
 
@@ -299,17 +308,14 @@ function classifyParserHint(err: AdtApiError, sql: string, chunkingAttempted: bo
 
   if (!hasSqlParserSignature(combined)) return undefined;
 
-  // Past ADT's statement-length ceiling the endpoint truncates before it parses, so SAP's grammar
-  // complaint describes the fragment rather than the query: a valid single SELECT is rejected with
-  // "Only one SELECT statement is allowed", and the token SAP names is nowhere near the real problem.
-  // The generic hint below then sends the caller off rewriting SQL that was never wrong. Measured
-  // identically on two ECC EHP 8 systems (SAP_BASIS 7.50 SP23), development and production: 255
-  // characters run, 256 fail. Only that release is verified, so this stays a post-hoc explanation of
-  // a rejection SAP already issued — never a pre-flight limit that could block a laxer backend.
-  if (!chunkingAttempted && sql.length > ADT_FREESTYLE_SQL_MAX_LENGTH) {
+  // Older handlers truncate before parsing, so SAP's grammar complaint describes the fragment rather
+  // than the submitted query. The exact 255/256 boundary is live-verified on 7.58 and reported on 7.50
+  // SP23; 8.16 accepts at least 2,048 characters. Keep this post-hoc and release-neutral: never reject
+  // a statement that a newer backend would accept.
+  if (!chunkingAttempted && sql.length > LEGACY_ADT_FREESTYLE_SQL_MAX_LENGTH) {
     return withHint(
       err,
-      `This statement is ${sql.length} characters and ADT's freestyle endpoint parses at most ${ADT_FREESTYLE_SQL_MAX_LENGTH}, so the SAP message above describes a truncated fragment — the query itself may be valid. Shorten the statement text: single-character table aliases and a short column alias, JOIN instead of INNER JOIN, fewer or shorter predicates, or split it and combine the results client-side.`,
+      `This statement is ${sql.length} characters. Some older ADT backends truncate freestyle SQL after ${LEGACY_ADT_FREESTYLE_SQL_MAX_LENGTH} characters before parsing, so SAP may be reporting an error about a truncated fragment rather than the submitted query. Shorten aliases and optional whitespace, reduce predicates, or split the query and combine the results client-side.`,
     );
   }
 
@@ -339,12 +345,7 @@ export function classifySapQueryParserError(
   minimalErrors = false,
 ): string | undefined {
   const classified = classifyParserHint(err, sql, chunkingAttempted);
-  if (classified === undefined || !minimalErrors) return classified;
-
-  // Every branch above formats through withHint, so the separator is present; lastIndexOf keeps a SAP
-  // message that happened to contain it on the redacted side, and a missing separator fails closed.
-  const hintStart = classified.lastIndexOf(HINT_SEPARATOR);
-  const minimal = `ADT API error: status ${err.statusCode}.`;
-  if (hintStart < 0) return minimal;
-  return `${minimal}${HINT_SEPARATOR}${classified.slice(hintStart + HINT_SEPARATOR.length)}`;
+  if (classified === undefined) return undefined;
+  if (!minimalErrors) return classified.message;
+  return `ADT API error: status ${err.statusCode}.${HINT_SEPARATOR}${classified.hint}`;
 }
