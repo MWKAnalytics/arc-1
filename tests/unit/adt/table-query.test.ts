@@ -27,6 +27,36 @@ describe('fitFreestyleSqlLines', () => {
     expect(result.split('\n').every((line) => line.length <= 255)).toBe(true);
   });
 
+  it.each([
+    ["'", 254],
+    ["'", 255],
+    ["'", 256],
+    ['`', 254],
+    ['`', 255],
+    ['`', 256],
+  ] as const)('preserves a doubled %s delimiter starting at column %i', (quote, column) => {
+    const prefix = 'SELECT mandt FROM t000 WHERE mtext = ';
+    const literal = `${quote}${'x'.repeat(column - prefix.length - 2)}${quote}${quote} y z${quote}`;
+    const sql = `${prefix}${literal} OR mtext = ${literal}`;
+    const result = fitFreestyleSqlLines(sql);
+    expect(result.split(literal)).toHaveLength(3);
+    expect(result.replaceAll('\n', ' ')).toBe(sql);
+    expect(result.split('\n').every((line) => line.length <= 255)).toBe(true);
+  });
+
+  it('preserves a short inline comment and its CRLF boundary when wrapping the preceding SQL', () => {
+    const commentAndNextLine = "\" keep this comment\r\nWHERE mandt <> '999'";
+    const sql = `SELECT ${'mandt, '.repeat(35)}mandt FROM t000 ${commentAndNextLine}`;
+    const result = fitFreestyleSqlLines(sql);
+    expect(result).toContain(commentAndNextLine);
+    expect(
+      result
+        .replaceAll('\r\n', '\n')
+        .split('\n')
+        .every((line) => line.length <= 255),
+    ).toBe(true);
+  });
+
   it('allows a break at exactly 255 without creating a column-one star comment', () => {
     const sql = `SELECT ${' '.repeat(248)}* FROM t000`;
     const result = fitFreestyleSqlLines(sql);
@@ -50,6 +80,7 @@ describe('fitFreestyleSqlLines', () => {
 
   it.each([
     'x'.repeat(256),
+    ` ${'x'.repeat(255)}`, // A break at the segment start would create an empty line.
     `SELECT '${'x '.repeat(130)}' FROM t000`,
     `SELECT \`${'x '.repeat(130)}\` FROM t000`,
     `SELECT mandt FROM t000 "${'comment '.repeat(40)}`,

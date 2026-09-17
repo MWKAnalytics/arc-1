@@ -7,35 +7,60 @@ const FREESTYLE_SQL_LINE_MAX = 255;
 const LINE_WRAP_REFUSAL =
   "Cannot fit freestyle SQL into SAP's 255-character lines. Add line breaks between tokens; long literals, comments, and templates cannot be split safely.";
 
+/** Find a break that advances the line without splitting a literal or creating a comment. */
+function findSafeLineBreak(line: string, segmentStart: number): number | undefined {
+  let lastSafeBreak: number | undefined;
+  // Each segment starts outside a literal: the preceding break was outside one too.
+  let quoteDelimiter: "'" | '`' | undefined;
+  const lineLimit = segmentStart + FREESTYLE_SQL_LINE_MAX;
+
+  for (let index = segmentStart; index <= lineLimit; index++) {
+    const char = line[index];
+    if (quoteDelimiter !== undefined) {
+      if (char !== quoteDelimiter) continue;
+      if (line[index + 1] === quoteDelimiter) {
+        index++; // Doubled delimiters belong to the literal.
+      } else {
+        quoteDelimiter = undefined;
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '`') {
+      quoteDelimiter = char;
+      continue;
+    }
+    if (char === '"' || char === '|') {
+      break; // Do not wrap inside an inline comment or attempt to parse a template.
+    }
+
+    const isWhitespace = char === ' ' || char === '\t';
+    if (isWhitespace && index > segmentStart && line[index + 1] !== '*') {
+      lastSafeBreak = index; // A column-one '*' would turn the new line into a comment.
+    }
+  }
+  return lastSafeBreak;
+}
+
 /** Replace only whitespace outside literals, preserving tokens and existing comment boundaries. */
 export function fitFreestyleSqlLines(sql: string): string {
   return sql
     .split('\n')
     .map((line) => {
       // CRLF's carriage return is not part of the SQL line; preserve it in the final slice.
-      const end = line.endsWith('\r') ? line.length - 1 : line.length;
-      if (end > FREESTYLE_SQL_LINE_MAX && line.startsWith('*')) throw new Error(LINE_WRAP_REFUSAL);
+      const lineLength = line.endsWith('\r') ? line.length - 1 : line.length;
+      if (lineLength <= FREESTYLE_SQL_LINE_MAX) return line;
+      if (line.startsWith('*')) throw new Error(LINE_WRAP_REFUSAL);
+
       const parts: string[] = [];
-      let start = 0;
-      while (end - start > FREESTYLE_SQL_LINE_MAX) {
-        let cut = -1;
-        let quote = '';
-        for (let i = start; i <= start + FREESTYLE_SQL_LINE_MAX; i++) {
-          const ch = line[i]!;
-          if (quote) {
-            if (ch === quote && line[i + 1] === quote) i++;
-            else if (ch === quote) quote = '';
-          } else if (ch === "'" || ch === '`') quote = ch;
-          // Do not unwrap a comment or attempt to parse ABAP template expressions.
-          else if (ch === '"' || ch === '|') break;
-          // A newly introduced column-one '*' would turn SQL into an ABAP comment.
-          else if ((ch === ' ' || ch === '\t') && line[i + 1] !== '*') cut = i;
-        }
-        if (cut <= start) throw new Error(LINE_WRAP_REFUSAL);
-        parts.push(line.slice(start, cut));
-        start = cut + 1;
+      let segmentStart = 0;
+      while (lineLength - segmentStart > FREESTYLE_SQL_LINE_MAX) {
+        const breakAt = findSafeLineBreak(line, segmentStart);
+        if (breakAt === undefined) throw new Error(LINE_WRAP_REFUSAL);
+        parts.push(line.slice(segmentStart, breakAt));
+        segmentStart = breakAt + 1;
       }
-      parts.push(line.slice(start));
+      parts.push(line.slice(segmentStart));
       return parts.join('\n');
     })
     .join('\n');
