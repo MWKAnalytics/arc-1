@@ -1120,27 +1120,10 @@ export async function createAndStartServer(
     logger.info('File logging enabled', { logFile: config.logFile });
   }
 
-  // Add BTP Audit Log sink if auditlog service is bound (auto-detected from VCAP_SERVICES)
-  const auditSink = await import('./sinks/btp-auditlog.js');
-  try {
-    const auditLogConfig = auditSink.parseBTPAuditLogConfig();
-    if (auditLogConfig) {
-      logger.addSink(new auditSink.BTPAuditLogSink(auditLogConfig));
-      logger.info('BTP Audit Log sink enabled', { url: auditLogConfig.url });
-    }
-  } catch (err) {
-    if (err instanceof auditSink.BTPAuditLogBindingError) {
-      // A bound-but-unusable binding is an operator error worth an ERROR, not an "optional" warning:
-      // the deployment expects an audit trail and would otherwise get none, silently.
-      logger.error('BTP Audit Log sink disabled — the bound service credentials cannot authenticate', {
-        error: err.message,
-      });
-    } else {
-      logger.warn('BTP Audit Log sink initialization failed (optional)', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  // Add BTP Audit Log sink if auditlog service is bound (auto-detected from VCAP_SERVICES);
+  // an unusable (non-x509) binding is reported as an error instead of a silent no-op.
+  const { registerBTPAuditLogSink } = await import('./sinks/btp-auditlog.js');
+  registerBTPAuditLogSink(logger);
 
   // Emit structured server_start audit event
   logger.emitAudit({

@@ -4,6 +4,7 @@ import {
   BTPAuditLogBindingError,
   BTPAuditLogSink,
   parseBTPAuditLogConfig,
+  registerBTPAuditLogSink,
 } from '../../../../src/server/sinks/btp-auditlog.js';
 
 const { fetchMock, agentOptions } = vi.hoisted(() => ({ fetchMock: vi.fn(), agentOptions: [] as unknown[] }));
@@ -126,6 +127,76 @@ describe('BTP Audit Log Sink', () => {
       expect(thrown).toBeInstanceOf(BTPAuditLogBindingError);
       expect((thrown as BTPAuditLogBindingError).missing).toEqual(['key']);
       expect((thrown as BTPAuditLogBindingError).plan).toBe('premium');
+    });
+  });
+
+  describe('registerBTPAuditLogSink', () => {
+    const originalEnv = process.env.VCAP_SERVICES;
+
+    afterEach(() => {
+      if (originalEnv === undefined) {
+        delete process.env.VCAP_SERVICES;
+      } else {
+        process.env.VCAP_SERVICES = originalEnv;
+      }
+    });
+
+    const stubLogger = () => ({
+      addSink: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    });
+
+    const x509Binding = (uaa: Record<string, string>) =>
+      JSON.stringify({
+        auditlog: [{ plan: 'premium', credentials: { url: 'https://api.auditlog.cf.example.com:6081', uaa } }],
+      });
+
+    it('does nothing when no auditlog service is bound', () => {
+      delete process.env.VCAP_SERVICES;
+      const logger = stubLogger();
+      registerBTPAuditLogSink(logger);
+      expect(logger.addSink).not.toHaveBeenCalled();
+      expect(logger.info).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('registers the sink and reports it enabled for a usable x509 binding', () => {
+      process.env.VCAP_SERVICES = x509Binding({
+        url: 'https://sub.auth.example.com',
+        certurl: 'https://sub.auth.cert.example.com',
+        clientid: 'my-client-id',
+        certificate: '-----BEGIN CERT-----',
+        key: '-----BEGIN KEY-----',
+      });
+      const logger = stubLogger();
+      registerBTPAuditLogSink(logger);
+      expect(logger.addSink).toHaveBeenCalledTimes(1);
+      expect(logger.addSink.mock.calls[0]![0]).toBeInstanceOf(BTPAuditLogSink);
+      expect(logger.info).toHaveBeenCalledWith('BTP Audit Log sink enabled', {
+        url: 'https://api.auditlog.cf.example.com:6081',
+      });
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('reports an unusable binding as an error and does not register the sink', () => {
+      // This is the case that used to log "sink enabled" and then write nothing, forever.
+      process.env.VCAP_SERVICES = x509Binding({
+        url: 'https://sub.auth.example.com',
+        clientid: 'my-client-id',
+        clientsecret: 'not-usable-for-this-plan',
+        'credential-type': 'binding-secret',
+      });
+      const logger = stubLogger();
+      registerBTPAuditLogSink(logger);
+      expect(logger.addSink).not.toHaveBeenCalled();
+      expect(logger.info).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      const [message, context] = logger.error.mock.calls[0]!;
+      expect(message).toContain('sink disabled');
+      expect(String((context as { error: string }).error)).toContain('uaa.certurl, uaa.certificate, uaa.key');
     });
   });
 

@@ -32,6 +32,7 @@ import type {
   ToolCallEndEvent,
   ToolCallStartEvent,
 } from '../audit.js';
+import type { Logger } from '../logger.js';
 import type { LogSink } from './types.js';
 
 /** BTP Audit Log service credentials from VCAP_SERVICES */
@@ -170,6 +171,36 @@ export function parseBTPAuditLogConfig(): BTPAuditLogConfig | undefined {
       key: String(uaa.key),
     },
   };
+}
+
+/** The slice of the logger the sink registration needs — keeps the function unit-testable with a stub. */
+type SinkRegistrar = Pick<Logger, 'addSink' | 'info' | 'warn' | 'error'>;
+
+/**
+ * Attach the BTP Audit Log sink when a usable premium binding is present.
+ *
+ * No binding → nothing happens (the sink is optional). A bound-but-unusable binding is an
+ * operator error worth an ERROR, not an "optional" warning: the deployment expects an audit
+ * trail and would otherwise get none, silently. Owned here rather than in server.ts so the
+ * startup wiring and the binding contract live next to each other.
+ */
+export function registerBTPAuditLogSink(logger: SinkRegistrar): void {
+  try {
+    const config = parseBTPAuditLogConfig();
+    if (!config) return;
+    logger.addSink(new BTPAuditLogSink(config));
+    logger.info('BTP Audit Log sink enabled', { url: config.url });
+  } catch (err) {
+    if (err instanceof BTPAuditLogBindingError) {
+      logger.error('BTP Audit Log sink disabled — the bound service credentials cannot authenticate', {
+        error: err.message,
+      });
+      return;
+    }
+    logger.warn('BTP Audit Log sink initialization failed (optional)', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 export class BTPAuditLogSink implements LogSink {
