@@ -254,6 +254,45 @@ elicitation events remain in stderr/file logs. Forwarded events are categorized 
 
 View these in the BTP cockpit under **Instances and Subscriptions > Audit Log Viewer**.
 
+### Provisioning the premium binding (x509 is mandatory)
+
+The premium plan authenticates the Write API over **mTLS**: the binding's client certificate is the
+credential, there is no client secret. The broker only issues certificates when both the instance
+and the binding are created with x509 parameters — a plain `cf create-service auditlog premium …`
+plus `cf bind-service` yields a `credential-type: binding-secret` binding that can never write an
+event. ARC-1 refuses such a binding at startup with an `ERROR` naming the missing fields
+(`uaa.certurl`, `uaa.certificate`, `uaa.key`) instead of reporting the sink as enabled.
+
+```bash
+cf create-service auditlog premium arc1-auditlog -c '{
+  "xs-security": {
+    "xsappname": "arc1-auditlog-<landscape>",
+    "oauth2-configuration": { "credential-types": ["x509"], "grant-types": ["client_credentials"] }
+  }
+}'
+cf bind-service arc1-mcp-server arc1-auditlog -c '{
+  "xsuaa": { "credential-type": "x509", "x509": { "key-length": 2048, "validity": 90, "validity-type": "DAYS" } }
+}'
+cf restart arc1-mcp-server
+```
+
+The same binding parameters belong in the MTA descriptor when the service is deployed with it
+(`requires[].parameters.config.xsuaa`), and `xsappname` must be unique per subaccount. After every
+bind, confirm the binding's `credential-type` is `x509` before trusting the startup log.
+
+Two operational consequences:
+
+- **Certificates expire** after `validity` days; from then on every write fails and the sink is dark
+  again. Rotate by re-binding (`cf unbind-service` + `cf bind-service` with the same parameters) and
+  restarting before the expiry date.
+- **A failing sink is visible in the application log**, not only in the missing Audit Log Viewer
+  entries: each rejected write leaves `[BTPAuditLogSink] Failed to write audit event: …` on stderr,
+  and a refused mTLS handshake carries the hint to check the certificate. The Audit Log Viewer lags
+  ingestion by several minutes, so `cf logs … --recent | grep BTPAuditLogSink` right after a tool
+  call is the quickest proof either way.
+
+SAP reference: *Audit Log Write API for Customers* (SAP Help Portal, BTP Cloud Foundry).
+
 ## Docker Volume Mount Example
 
 ```bash

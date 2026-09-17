@@ -1,6 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuditEvent } from '../../../../src/server/audit.js';
-import { BTPAuditLogSink, parseBTPAuditLogConfig } from '../../../../src/server/sinks/btp-auditlog.js';
+import {
+  BTPAuditLogBindingError,
+  BTPAuditLogSink,
+  parseBTPAuditLogConfig,
+} from '../../../../src/server/sinks/btp-auditlog.js';
+
+const { fetchMock, agentOptions } = vi.hoisted(() => ({ fetchMock: vi.fn(), agentOptions: [] as unknown[] }));
+
+// The sink goes through undici's fetch + Agent: the mTLS token request needs a dispatcher that
+// carries the binding's client certificate, which Node's global fetch cannot take.
+vi.mock('undici', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('undici')>();
+  class MockAgent {
+    constructor(options: unknown) {
+      agentOptions.push(options);
+    }
+  }
+  return { ...actual, fetch: fetchMock, Agent: MockAgent };
+});
 
 describe('BTP Audit Log Sink', () => {
   describe('parseBTPAuditLogConfig', () => {
@@ -53,6 +71,62 @@ describe('BTP Audit Log Sink', () => {
       process.env.VCAP_SERVICES = 'not-json';
       expect(parseBTPAuditLogConfig()).toBeUndefined();
     });
+
+    it('throws when the premium binding was created without x509 credentials', () => {
+      // The broker's default (`credential-type: binding-secret`) yields clientid/clientsecret only.
+      // Such a binding can never authenticate against the mTLS token endpoint, so parsing must fail
+      // loudly instead of letting startup log "sink enabled" over a sink that writes nothing.
+      process.env.VCAP_SERVICES = JSON.stringify({
+        auditlog: [
+          {
+            plan: 'premium',
+            credentials: {
+              url: 'https://api.auditlog.cf.example.com:6081',
+              uaa: {
+                url: 'https://sub.auth.example.com',
+                clientid: 'my-client-id',
+                clientsecret: 'not-usable-for-this-plan',
+                'credential-type': 'binding-secret',
+              },
+            },
+          },
+        ],
+      });
+
+      expect(() => parseBTPAuditLogConfig()).toThrow(BTPAuditLogBindingError);
+      expect(() => parseBTPAuditLogConfig()).toThrow(/uaa\.certurl, uaa\.certificate, uaa\.key/);
+      expect(() => parseBTPAuditLogConfig()).toThrow(/credential-type "binding-secret"/);
+      // The message carries the exact cf parameters an operator needs, so the fix is one copy away.
+      expect(() => parseBTPAuditLogConfig()).toThrow(/"credential-type":"x509"/);
+    });
+
+    it('names exactly the x509 fields that are missing', () => {
+      process.env.VCAP_SERVICES = JSON.stringify({
+        auditlog: [
+          {
+            plan: 'premium',
+            credentials: {
+              url: 'https://api.auditlog.cf.example.com:6081',
+              uaa: {
+                certurl: 'https://sub.auth.cert.example.com',
+                clientid: 'my-client-id',
+                certificate: '-----BEGIN CERT-----',
+              },
+            },
+          },
+        ],
+      });
+
+      let thrown: unknown;
+      try {
+        parseBTPAuditLogConfig();
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(BTPAuditLogBindingError);
+      expect((thrown as BTPAuditLogBindingError).missing).toEqual(['key']);
+      expect((thrown as BTPAuditLogBindingError).plan).toBe('premium');
+    });
   });
 
   describe('Event categorization', () => {
@@ -61,13 +135,13 @@ describe('BTP Audit Log Sink', () => {
 
     beforeEach(() => {
       stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-      // Mock global fetch
-      fetchSpy = vi.fn().mockResolvedValue({
+      fetchSpy = fetchMock;
+      fetchSpy.mockReset().mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ access_token: 'test-token', expires_in: 3600 }),
         text: () => Promise.resolve(''),
       });
-      vi.stubGlobal('fetch', fetchSpy);
+      agentOptions.length = 0;
     });
 
     afterEach(() => {
@@ -103,6 +177,115 @@ describe('BTP Audit Log Sink', () => {
       expect(fetchSpy).toHaveBeenCalledTimes(2);
       const auditCall = fetchSpy.mock.calls[1]!;
       expect(auditCall[0]).toContain('/security-events');
+    });
+
+    it('requests the token over mTLS with the certificate and key from the binding', async () => {
+      const sink = new BTPAuditLogSink(config);
+      sink.write({ timestamp: '', level: 'info', event: 'tool_call_start', tool: 'SAPRead', args: {} });
+      await sink.flush();
+
+      // The Agent carries the binding's client certificate — without it the premium plan's
+      // `*.authentication.cert.*` endpoint resets the handshake and nothing is ever written.
+      expect(agentOptions).toEqual([{ connect: { cert: 'cert', key: 'key' } }]);
+      const tokenCall = fetchSpy.mock.calls[0]!;
+      expect(tokenCall[0]).toBe('https://sub.auth.cert.test/oauth/token');
+      const init = tokenCall[1] as { body?: string; dispatcher?: unknown };
+      expect(init.dispatcher).toBeDefined();
+      expect(init.body).toContain('grant_type=client_credentials');
+      expect(init.body).toContain('client_id=test-client');
+    });
+
+    it('reuses one mTLS agent across events', async () => {
+      const sink = new BTPAuditLogSink(config);
+      sink.write({ timestamp: '', level: 'info', event: 'tool_call_start', tool: 'SAPRead', args: {} });
+      sink.write({ timestamp: '', level: 'info', event: 'tool_call_start', tool: 'SAPSearch', args: {} });
+      await sink.flush();
+
+      expect(agentOptions).toHaveLength(1);
+    });
+
+    it('reports a refused mTLS handshake to stderr with the certificate hint', async () => {
+      // undici reports a rejected TLS handshake (no/expired client certificate) as `fetch failed`.
+      fetchSpy.mockReset().mockRejectedValue(new TypeError('fetch failed'));
+      const sink = new BTPAuditLogSink(config);
+      sink.write({ timestamp: '', level: 'info', event: 'tool_call_start', tool: 'SAPRead', args: {} });
+      await sink.flush();
+
+      const written = stderrSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('');
+      expect(written).toContain('[BTPAuditLogSink] Failed to write audit event');
+      expect(written).toContain('fetch failed');
+      expect(written).toContain('certificate has not expired');
+    });
+
+    it('reports a rejected token request with the status and endpoint', async () => {
+      fetchSpy.mockReset().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(''),
+      });
+      const sink = new BTPAuditLogSink(config);
+      sink.write({ timestamp: '', level: 'info', event: 'tool_call_start', tool: 'SAPRead', args: {} });
+      await sink.flush();
+
+      const written = stderrSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('');
+      expect(written).toContain('Token fetch failed: HTTP 401 from https://sub.auth.cert.test');
+    });
+
+    it('carries a data_subject on data-access records, naming the SAP system by its target', async () => {
+      // The Write API rejects data-accesses/data-modifications without `data_subject` (HTTP 400,
+      // "'data_subject' and 'data_subjects' properties cannot be both null or empty").
+      const sink = new BTPAuditLogSink(config);
+      sink.write({
+        timestamp: '',
+        level: 'info',
+        event: 'tool_call_start',
+        tool: 'SAPRead',
+        target: 'A4H.001',
+        args: {},
+      });
+      await sink.flush();
+
+      const body = JSON.parse(fetchSpy.mock.calls[1]![1]!.body as string);
+      expect(body.data_subject).toEqual({ type: 'sap-system', role: 'data-owner', id: { system: 'A4H.001' } });
+    });
+
+    it('falls back to the configured target as data_subject when no target or destination is known', async () => {
+      const sink = new BTPAuditLogSink(config);
+      sink.write({
+        timestamp: '',
+        level: 'info',
+        event: 'tool_call_end',
+        tool: 'SAPWrite',
+        durationMs: 1,
+        status: 'success',
+      });
+      await sink.flush();
+
+      const auditCall = fetchSpy.mock.calls[1]!;
+      expect(auditCall[0]).toContain('/data-modifications');
+      const body = JSON.parse(auditCall[1]!.body as string);
+      expect(body.data_subject.id).toEqual({ system: 'configured-target' });
+    });
+
+    it('sends no data_subject on security events and configuration changes', async () => {
+      const sink = new BTPAuditLogSink(config);
+      sink.write({
+        timestamp: '',
+        level: 'warn',
+        event: 'auth_scope_denied',
+        tool: 'SAPWrite',
+        requiredScope: 'write',
+        availableScopes: ['read'],
+      });
+      sink.write({ timestamp: '', level: 'info', event: 'tool_call_start', tool: 'SAPTransport', args: {} });
+      await sink.flush();
+
+      const bodies = fetchSpy.mock.calls
+        .filter((call) => String(call[0]).includes('/audit-log/'))
+        .map((call) => JSON.parse(call[1]!.body as string));
+      expect(bodies).toHaveLength(2);
+      for (const body of bodies) expect(body).not.toHaveProperty('data_subject');
     });
 
     it('sends bounded data-response events without response or SQL bodies', async () => {

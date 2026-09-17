@@ -523,6 +523,12 @@ buildpack-provided `MEMORY_AVAILABLE`, derives old-space from the durable CF all
 512 MiB, 768 MiB at 1 GiB), and `exec`s Node so CF's SIGTERM reaches ARC-1. Verify the `Runtime
 memory envelope` and `Data-result safety envelope` startup logs after every memory or limit change.
 
+When the landscape adds the **BTP Audit Log Service** (`auditlog`, plan `premium`), create the
+instance and the binding with x509 parameters — the Write API is mTLS-only and a default
+`binding-secret` binding is rejected at startup. Commands, the MTA `requires` form, certificate
+expiry and the fastest verification are in
+[log-analysis.md](log-analysis.md#provisioning-the-premium-binding-x509-is-mandatory).
+
 ## 11. Handover and ongoing operation
 
 Before customer users connect, complete the

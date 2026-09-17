@@ -10,12 +10,16 @@
  * - data-modifications: tool calls that write/delete SAP data
  * - configuration-changes: transport releases, activations
  *
- * Authentication uses mTLS (X.509 certificates) via the premium plan binding.
+ * Authentication uses mTLS (X.509 certificates) via the premium plan binding: the token endpoint
+ * (`uaa.certurl`, an `*.authentication.cert.*` host) accepts only a TLS client certificate — there
+ * is no client secret for this plan. The binding must therefore be created with x509 credentials;
+ * a default (`binding-secret`) binding is rejected at startup instead of being reported as enabled.
  * Tokens are cached with 60s refresh buffer (same pattern as btp.ts connectivity proxy).
  *
  * All writes are fire-and-forget — errors go to stderr, never block tool calls.
  */
 
+import { Agent, fetch } from 'undici';
 import type {
   AuditEvent,
   AuthPPCreatedEvent,
@@ -85,44 +89,95 @@ function categorize(event: AuditEvent): AuditCategory | null {
   }
 }
 
+/** Binding credential fields the premium plan's mTLS token flow cannot work without. */
+const REQUIRED_X509_FIELDS = ['certurl', 'certificate', 'key'] as const;
+
+/**
+ * A premium/oauth2 auditlog binding exists but can never authenticate.
+ *
+ * The broker issues `credential-type: binding-secret` (clientid + clientsecret) unless the instance
+ * and the binding were created with x509 parameters. Such a binding has no `certurl`, `certificate`
+ * or `key`, and the mTLS token endpoint refuses it — every audit write would fail silently. Thrown
+ * from {@link parseBTPAuditLogConfig} so startup reports the problem instead of logging "enabled".
+ */
+export class BTPAuditLogBindingError extends Error {
+  constructor(
+    readonly plan: string,
+    readonly missing: string[],
+    credentialType: string | undefined,
+  ) {
+    super(
+      `BTP Audit Log binding (plan "${plan}", credential-type "${credentialType ?? 'unknown'}") is missing ` +
+        `${missing.map((field) => `uaa.${field}`).join(', ')}. The premium plan authenticates over mTLS, so the ` +
+        `instance must be created with -c '{"xs-security":{"xsappname":"<unique-per-subaccount>",` +
+        `"oauth2-configuration":{"credential-types":["x509"],"grant-types":["client_credentials"]}}}' and bound ` +
+        `with -c '{"xsuaa":{"credential-type":"x509","x509":{"key-length":2048,"validity":90,"validity-type":"DAYS"}}}' ` +
+        `(MTA: requires[].parameters.config.xsuaa). Rebind and restart; the sink stays disabled until then.`,
+    );
+    this.name = 'BTPAuditLogBindingError';
+  }
+}
+
+interface AuditLogBinding {
+  plan?: unknown;
+  credentials?: { url?: unknown; uaa?: Record<string, unknown> };
+}
+
 /**
  * Parse BTP Audit Log credentials from VCAP_SERVICES.
- * Returns undefined if the service is not bound.
+ *
+ * Returns undefined if the service is not bound (or VCAP_SERVICES is unreadable). Throws
+ * {@link BTPAuditLogBindingError} if a premium/oauth2 binding is present but lacks the x509
+ * credentials — the one misconfiguration that would otherwise look like a working sink.
  */
 export function parseBTPAuditLogConfig(): BTPAuditLogConfig | undefined {
   const vcap = process.env.VCAP_SERVICES;
   if (!vcap) return undefined;
 
+  let binding: AuditLogBinding | undefined;
   try {
     const services = JSON.parse(vcap);
     // Look for auditlog service with premium plan
     const auditlogEntries = services.auditlog ?? services['auditlog-api'] ?? [];
-    const premiumBinding = Array.isArray(auditlogEntries)
-      ? auditlogEntries.find((s: Record<string, unknown>) => s.plan === 'premium' || s.plan === 'oauth2')
+    binding = Array.isArray(auditlogEntries)
+      ? auditlogEntries.find((s: AuditLogBinding) => s.plan === 'premium' || s.plan === 'oauth2')
       : undefined;
-
-    if (!premiumBinding?.credentials) return undefined;
-
-    const creds = premiumBinding.credentials;
-    return {
-      url: creds.url,
-      uaa: {
-        url: creds.uaa?.url,
-        certurl: creds.uaa?.certurl,
-        clientid: creds.uaa?.clientid,
-        certificate: creds.uaa?.certificate,
-        key: creds.uaa?.key,
-      },
-    };
   } catch {
     return undefined;
   }
+
+  const creds = binding?.credentials;
+  if (!creds) return undefined;
+
+  const uaa = creds.uaa ?? {};
+  const missing = REQUIRED_X509_FIELDS.filter((field) => typeof uaa[field] !== 'string' || uaa[field] === '');
+  if (missing.length > 0) {
+    const credentialType = uaa['credential-type'];
+    throw new BTPAuditLogBindingError(
+      String(binding?.plan),
+      missing,
+      typeof credentialType === 'string' ? credentialType : undefined,
+    );
+  }
+
+  return {
+    url: String(creds.url),
+    uaa: {
+      url: String(uaa.url ?? ''),
+      certurl: String(uaa.certurl),
+      clientid: String(uaa.clientid ?? ''),
+      certificate: String(uaa.certificate),
+      key: String(uaa.key),
+    },
+  };
 }
 
 export class BTPAuditLogSink implements LogSink {
   private token: string | undefined;
   private tokenExpiresAt = 0;
   private pendingWrites: Promise<void>[] = [];
+  /** Dispatcher that presents the binding's client certificate to the mTLS token endpoint. */
+  private mtlsAgent: Agent | undefined;
 
   constructor(private config: BTPAuditLogConfig) {}
 
@@ -156,7 +211,7 @@ export class BTPAuditLogSink implements LogSink {
 
   private async sendEvent(event: AuditEvent, category: AuditCategory): Promise<void> {
     const token = await this.getToken();
-    const payload = this.buildPayload(event);
+    const payload = this.buildPayload(event, category);
 
     const response = await fetch(`${this.config.url}/audit-log/oauth2/v2/${category}`, {
       method: 'POST',
@@ -173,7 +228,7 @@ export class BTPAuditLogSink implements LogSink {
     }
   }
 
-  private buildPayload(event: AuditEvent): Record<string, unknown> {
+  private buildPayload(event: AuditEvent, category: AuditCategory): Record<string, unknown> {
     const user = event.user ?? '$USER';
     // Security events carry free-text `data`, not attributes — append the calling agent there so a
     // denial or lockout can be attributed to the software that triggered it, not just the user.
@@ -184,6 +239,19 @@ export class BTPAuditLogSink implements LogSink {
       time: event.timestamp,
       tenant: '$PROVIDER',
     };
+    // The Write API rejects data-access and data-modification records without a `data_subject`
+    // ("'data_subject' and 'data_subjects' properties cannot be both null or empty", HTTP 400).
+    // ARC-1 reads and changes SAP repository/business data on behalf of the caller, so the data
+    // subject is the SAP system whose data is touched — identified by the resolved target or
+    // destination, or the single configured target when neither is known. Security events and
+    // configuration changes do not carry the field (SAP's schema has no place for it there).
+    if (category === 'data-accesses' || category === 'data-modifications') {
+      base.data_subject = {
+        type: 'sap-system',
+        role: 'data-owner',
+        id: { system: event.target ?? event.destination ?? 'configured-target' },
+      };
+    }
 
     switch (event.event) {
       case 'tool_call_start': {
@@ -339,11 +407,13 @@ export class BTPAuditLogSink implements LogSink {
       return this.token;
     }
 
-    // For mTLS, we'd need to use the certificate and key from the service binding.
-    // Node.js fetch doesn't support client certificates directly — in production,
-    // the CF buildpack handles certificate injection via the NODE_EXTRA_CA_CERTS
-    // and the service binding provides tokens via the bound app's identity.
-    // For now, use client_credentials grant with the service binding.
+    // The premium plan's token endpoint accepts only mTLS: the binding's client certificate IS
+    // the credential, there is no client secret. Without it the `*.authentication.cert.*` host
+    // resets the TLS handshake, which undici surfaces as `TypeError: fetch failed`. Node's global
+    // fetch cannot present a client certificate, so the request goes through undici's fetch with
+    // an Agent that carries the certificate and key from the binding (same undici-fetch rule as
+    // `AdtHttpClient.doFetch`: the built-in fetch does not accept npm-undici dispatchers).
+    this.mtlsAgent ??= new Agent({ connect: { cert: this.config.uaa.certificate, key: this.config.uaa.key } });
     const tokenUrl = `${this.config.uaa.certurl}/oauth/token`;
     const params = new URLSearchParams({
       grant_type: 'client_credentials',
@@ -354,10 +424,16 @@ export class BTPAuditLogSink implements LogSink {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
+      dispatcher: this.mtlsAgent,
+    }).catch((err: unknown) => {
+      throw new Error(
+        `Token fetch failed: ${err instanceof Error ? err.message : String(err)} — the mTLS handshake with ` +
+          `${this.config.uaa.certurl} was refused; check that the binding is x509 and its certificate has not expired`,
+      );
     });
 
     if (!response.ok) {
-      throw new Error(`Token fetch failed: HTTP ${response.status}`);
+      throw new Error(`Token fetch failed: HTTP ${response.status} from ${this.config.uaa.certurl}`);
     }
 
     const data = (await response.json()) as { access_token: string; expires_in: number };

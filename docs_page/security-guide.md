@@ -263,7 +263,7 @@ event; the BTP Audit Log sink forwards the security/data categories described be
 |------|-----------|--------|
 | **Stderr** | Always active | JSON lines to stderr |
 | **File** | Set `--log-file` / `ARC1_LOG_FILE` | JSON lines appended to a file |
-| **BTP Audit Log** | Auto-detected from `VCAP_SERVICES` (requires `auditlog` premium plan) | Categorized security and data events sent to BTP Audit Log Service v2 API |
+| **BTP Audit Log** | Auto-detected from `VCAP_SERVICES` (requires `auditlog` premium plan **bound with x509 credentials** — the Write API is mTLS-only; a default `binding-secret` binding is rejected at startup, see [log-analysis.md](log-analysis.md#provisioning-the-premium-binding-x509-is-mandatory)) | Categorized security and data events sent to BTP Audit Log Service v2 API |
 
 ### What Gets Logged
 
