@@ -263,7 +263,12 @@ event; the BTP Audit Log sink forwards the security/data categories described be
 |------|-----------|--------|
 | **Stderr** | Always active | JSON lines to stderr |
 | **File** | Set `--log-file` / `ARC1_LOG_FILE` | JSON lines appended to a file |
-| **BTP Audit Log** | Auto-detected from `VCAP_SERVICES` (requires `auditlog` premium plan) | Categorized security and data events sent to BTP Audit Log Service v2 API |
+| **BTP Audit Log** | Auto-detected from a complete X.509 `auditlog` premium binding | Categorized security and data events sent to BTP Audit Log Service v2 API |
+
+Audit Log requires X.509 on both the service instance and binding. Incomplete bindings log an
+`ERROR` and are skipped; delivery failures log a `WARN` at most once a minute without failing the
+tool call. See [setup](btp-cloud-foundry-deployment.md#optional-btp-audit-log-sink) and
+[certificate rotation](btp-administration.md#audit-log-certificate-rotation).
 
 ### What Gets Logged
 
