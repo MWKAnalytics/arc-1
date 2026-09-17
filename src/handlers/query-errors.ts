@@ -39,9 +39,6 @@ const SOURCE_ALIAS_STOP_WORDS = new Set([
   'WITH',
 ]);
 
-/** Older ADT handlers truncate freestyle SQL beyond this length before parsing. */
-const LEGACY_ADT_FREESTYLE_SQL_MAX_LENGTH = 255;
-
 export function maskSqlStringLiterals(sql: string): string {
   let masked = '';
   let inString = false;
@@ -232,14 +229,6 @@ function classifyParserHint(err: AdtApiError, sql: string, chunkingAttempted: bo
   }
 
   if (!hasSqlParserSignature(combined)) return undefined;
-
-  // Older handlers truncate before parsing, so SAP's grammar complaint describes the fragment rather
-  // than the submitted query. The exact 255/256 boundary is live-verified on 7.58 and reported on 7.50
-  // SP23; 8.16 accepts at least 2,048 characters. Keep this post-hoc and release-neutral: never reject
-  // a statement that a newer backend would accept.
-  if (!chunkingAttempted && sql.length > LEGACY_ADT_FREESTYLE_SQL_MAX_LENGTH) {
-    return `This statement is ${sql.length} characters. Some older ADT backends truncate freestyle SQL after ${LEGACY_ADT_FREESTYLE_SQL_MAX_LENGTH} characters before parsing, so SAP may be reporting an error about a truncated fragment rather than the submitted query. Shorten aliases and optional whitespace, reduce predicates, or split the query and combine the results client-side.`;
-  }
 
   const hints = [
     'ADT freestyle SQL parser rejected this query on this backend/version.',

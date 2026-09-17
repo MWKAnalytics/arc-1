@@ -36,7 +36,12 @@ import { canonicalRevisionSourcePath } from './path-safety.js';
 import { clampUrlLimit } from './result-limits.js';
 import { checkOperation, OperationType, type SafetyConfig } from './safety.js';
 import { Semaphore } from './semaphore.js';
-import { buildTableQuerySql, clampPreviewRows, executeDataPreviewStatements } from './table-query.js';
+import {
+  buildTableQuerySql,
+  clampPreviewRows,
+  executeDataPreviewStatements,
+  fitFreestyleSqlLines,
+} from './table-query.js';
 import {
   readTextElementPart,
   readTextElements,
@@ -1478,7 +1483,12 @@ export class AdtClient {
     signal?: AbortSignal,
   ): Promise<string> {
     const rowLimit = clampPreviewRows(maxRows);
-    return this.postDataPreview(`/sap/bc/adt/datapreview/freestyle?rowNumber=${rowLimit}`, sql, budget, signal);
+    return this.postDataPreview(
+      `/sap/bc/adt/datapreview/freestyle?rowNumber=${rowLimit}`,
+      fitFreestyleSqlLines(sql),
+      budget,
+      signal,
+    );
   }
 
   /**

@@ -2,6 +2,45 @@
 
 import { canonicalDataSourceName } from './data-source-name.js';
 
+/** ADT's freestyle handler cuts each input line here (verified on 7.58 and 8.16). */
+const FREESTYLE_SQL_LINE_MAX = 255;
+const LINE_WRAP_REFUSAL =
+  "Cannot fit freestyle SQL into SAP's 255-character lines. Add line breaks between tokens; long literals, comments, and templates cannot be split safely.";
+
+/** Replace only whitespace outside literals, preserving tokens and existing comment boundaries. */
+export function fitFreestyleSqlLines(sql: string): string {
+  return sql
+    .split('\n')
+    .map((line) => {
+      // CRLF's carriage return is not part of the SQL line; preserve it in the final slice.
+      const end = line.endsWith('\r') ? line.length - 1 : line.length;
+      if (end > FREESTYLE_SQL_LINE_MAX && line.startsWith('*')) throw new Error(LINE_WRAP_REFUSAL);
+      const parts: string[] = [];
+      let start = 0;
+      while (end - start > FREESTYLE_SQL_LINE_MAX) {
+        let cut = -1;
+        let quote = '';
+        for (let i = start; i <= start + FREESTYLE_SQL_LINE_MAX; i++) {
+          const ch = line[i]!;
+          if (quote) {
+            if (ch === quote && line[i + 1] === quote) i++;
+            else if (ch === quote) quote = '';
+          } else if (ch === "'" || ch === '`') quote = ch;
+          // Do not unwrap a comment or attempt to parse ABAP template expressions.
+          else if (ch === '"' || ch === '|') break;
+          // A newly introduced column-one '*' would turn SQL into an ABAP comment.
+          else if ((ch === ' ' || ch === '\t') && line[i + 1] !== '*') cut = i;
+        }
+        if (cut <= start) throw new Error(LINE_WRAP_REFUSAL);
+        parts.push(line.slice(start, cut));
+        start = cut + 1;
+      }
+      parts.push(line.slice(start));
+      return parts.join('\n');
+    })
+    .join('\n');
+}
+
 /** Allowed SQL comparison operators for TABLE_QUERY where conditions. */
 const ALLOWED_OPS = new Set([
   '=',

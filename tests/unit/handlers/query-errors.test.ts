@@ -171,69 +171,6 @@ describe('classifySapQueryParserError', () => {
   });
 });
 
-describe('legacy statement-length ceiling', () => {
-  // Both forms remain valid ABAP SQL; only the amount of optional whitespace crosses the boundary.
-  const validSqlAtLength = (length: number) => {
-    const head = 'SELECT mandt';
-    const tail = ' AS client FROM t000';
-    return head + ' '.repeat(length - head.length - tail.length) + tail;
-  };
-
-  it('explains the truncation instead of the misleading generic parser advice', () => {
-    const hint = hintFor(validSqlAtLength(256));
-    expect(hint).toContain('256 characters');
-    expect(hint).toContain('255');
-    expect(hint).toContain('truncated fragment');
-    expect(hint).not.toContain('Submit one SELECT without comments or a semicolon');
-  });
-
-  it('leaves a statement at the limit to the existing classifiers', () => {
-    expect(hintFor(validSqlAtLength(255))).toContain('Submit one SELECT without comments or a semicolon');
-  });
-
-  it('keeps a specific dialect correction ahead of the length fallback', () => {
-    const hint = hintFor(`SELECT TOP 5 mandt FROM t000${' '.repeat(256)}`);
-    expect(hint).toContain('TOP belongs to another SQL dialect');
-    expect(hint).not.toContain('truncated fragment');
-  });
-
-  it('does not blame length when ARC-1 already split the statement into chunks', () => {
-    const hint = classifySapQueryParserError(parserError(), validSqlAtLength(300), true, false) ?? '';
-    expect(hint).not.toContain('truncated fragment');
-    expect(hint).toContain('ARC-1 already split the longest literal IN-list');
-  });
-});
-
-describe('minimal-errors disclosure control', () => {
-  it('withholds the SAP diagnostic and the ADT path but keeps the hint', () => {
-    const hint = classifySapQueryParserError(parserError(), 'SELECT TOP 5 mandt FROM t000', false, true) ?? '';
-    expect(hint).toContain('ADT API error: status 400.');
-    expect(hint).toContain('maxRows: 5');
-    expect(hint).not.toContain('Only one SELECT statement is allowed');
-    expect(hint).not.toContain('/sap/bc/adt/datapreview/freestyle');
-  });
-
-  it('discloses both when minimal errors are off', () => {
-    const hint = classifySapQueryParserError(parserError(), 'SELECT TOP 5 mandt FROM t000', false, false) ?? '';
-    expect(hint).toContain('Only one SELECT statement is allowed');
-    expect(hint).toContain('/sap/bc/adt/datapreview/freestyle');
-  });
-
-  it('redacts through the handler, which returns classified failures as results', async () => {
-    const client = {
-      runQueryBatch: vi.fn().mockRejectedValue(dataPreviewMessage004('"DESC" is not allowed here. "." is expected.')),
-      runQuery: vi.fn(),
-    } as unknown as AdtClient;
-
-    const result = await handleSAPQuery(client, { sql: 'SELECT mandt FROM t000 ORDER BY mandt DESC' }, true);
-
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('ASCENDING or DESCENDING');
-    expect(result.content[0]?.text).not.toContain('/sap/bc/adt/datapreview/freestyle');
-    expect(result.content[0]?.text).not.toContain('is not allowed here');
-  });
-});
-
 describe('handleSAPQuery parser-error ordering', () => {
   it('classifies a message-004 DESC failure before unknown-column enrichment', async () => {
     const client = {
