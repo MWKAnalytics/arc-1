@@ -46,9 +46,25 @@ the classifier only runs after SAP has already rejected a longer statement.
 ### Resolved maintainability concern — redaction by delimiter parsing
 
 The first revision constructed a full error string and then used `lastIndexOf("\\n\\nHint: ")` to
-recover the authored hint for minimal mode. The final classifier carries `{ message, hint }`
-internally and selects the safe rendering directly. Untrusted SAP text is never parsed to establish
-the disclosure boundary.
+recover the authored hint for minimal mode. The final internal classifier returns only the authored
+hint; the public formatter selects a raw or status-only prefix once. Untrusted SAP text is never
+parsed to establish the disclosure boundary.
+
+### Follow-up maintainability review
+
+The initial maintainer follow-up introduced a `{ message, hint }` result and `withHint` helper. Neither
+is needed: minimal mode discarded the formatted message, while normal mode could construct it at the
+same final boundary. Returning a plain hint removes the interface, helper, separator constant, and
+repeated wrappers (78 fewer production lines), preserving every classifier condition and hint.
+
+Added dispatch-level coverage for both disclosure settings. It verifies the real config-to-handler
+wiring and withholds a diagnostic containing its own `Hint:` delimiter in minimal mode. No new
+configuration, release detection, query rewriting, or general error framework was introduced.
+
+The disclosure flag is required through the handler/classifier chain, following the repository's
+security-parameter invariant. Removing the dispatch argument now fails typechecking. Before making
+it required, the same deliberate mutation failed the new minimal-mode regression test while normal
+mode passed; the correct wiring was restored before running the full suite.
 
 ### Test quality improvement
 
@@ -73,13 +89,13 @@ chunk-generated failures do not blame the caller's original length.
 
 ```text
 npm run typecheck                                  PASS
-npm run lint                                       PASS (one unrelated pre-existing info)
+npm run lint                                       PASS (three pre-existing infos)
 npm run validate:policy                            PASS, 128 entries / 14 schemas
 npm run check:sizes                                PASS
 npm run build                                      PASS
 npm run docs:build                                 PASS (upstream MkDocs 2 advisory only)
-focused handler/schema/registry tests              PASS, 196 tests
-npm test                                           PASS, 219 files / 6,793 tests
+focused query/classifier/dispatch tests             PASS, 162 tests
+npm test                                           PASS, 219 files / 6,795 tests
 git diff --check origin/main                       PASS
 live SAP_BASIS 7.58 and 8.16 product-path checks   PASS
 ```
@@ -95,10 +111,11 @@ accepted 256-, 512-, and 2,048-character statements. The final wording correctly
 some older backends and keeps the behavior post-hoc, so newer systems are never blocked.
 
 The `ARC1_MINIMAL_ERRORS` leak is also fixed on the actual result path: minimal mode keeps the
-ARC-1-authored remediation but removes SAP's diagnostic and the ADT path. The internal structured
-classification avoids deriving the safe boundary by splitting untrusted error text.
+ARC-1-authored remediation but removes SAP's diagnostic and the ADT path. The internal classifier
+returns only the hint; a single formatter applies the disclosure setting without splitting untrusted
+error text.
 
-Verification: typecheck, lint, policy and schema-size gates pass; 196 focused tests and all 6,793 unit
+Verification: typecheck, lint, policy and schema-size gates pass; 162 focused tests and all 6,795 unit
 tests pass; live before/after checks pass on 7.58 and 8.16. No security or architectural blockers
 remain.
 ```

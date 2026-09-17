@@ -155,7 +155,7 @@ function resolveUnknownColumnTable(sql: string, badColumn: string): string | und
 export async function handleSAPQuery(
   client: AdtClient,
   args: Record<string, unknown>,
-  minimalErrors = false,
+  minimalErrors: boolean,
 ): Promise<ToolResult> {
   const sql = String(args.sql ?? '');
   const maxRows = Number(args.maxRows ?? 100);

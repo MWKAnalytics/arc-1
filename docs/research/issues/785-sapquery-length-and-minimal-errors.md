@@ -18,7 +18,7 @@ of at least 2,048 characters. The disclosure-control defect reproduced on the pr
 - The fix should preserve the ARC-1-authored remediation hint while replacing the error prefix with
   status-only text when minimal errors are enabled.
 
-## Claim and current HEAD
+## Claim and pre-fix baseline
 
 The report describes two defects in `SAPQuery`:
 
@@ -26,7 +26,7 @@ The report describes two defects in `SAPQuery`:
    generic ARC-1 parser advice; and
 2. classified parser errors ignore `ARC1_MINIMAL_ERRORS`.
 
-Current HEAD confirms the control-flow precondition for both:
+The pre-fix `main` baseline (`5bc5310b`) confirms the control-flow precondition for both:
 
 - `src/handlers/query.ts` calls `classifySapQueryParserError()` and immediately returns its string as
   an error result;
@@ -62,7 +62,7 @@ SP23 observation while broadening the affected range. The available 7.50 SP02 sy
 incompletely configured to execute the endpoint, so it cannot independently confirm that exact
 support-package level.
 
-For the disclosure defect, this invalid sort syntax was submitted through current HEAD on 7.58:
+For the disclosure defect, this invalid sort syntax was submitted through the pre-fix baseline on 7.58:
 
 ```text
 SELECT mandt FROM t000 ORDER BY mandt DESC
@@ -115,7 +115,7 @@ formatter, so the classifier must apply the same client-disclosure control befor
   classifier; keep chunked retries out of that fallback; format classified errors from a safe base
   under minimal mode.
 - `src/handlers/query.ts` and `src/handlers/dispatch.ts`: pass the minimal-error flag to the result
-  path without coupling the handler to unrelated configuration.
+  path as a required boolean without coupling the handler to unrelated configuration.
 - `src/handlers/tools.ts` and tool-definition fixtures: tell callers that *some older* backends have
   the limit, without claiming that 8.16 does.
 - `tests/unit/handlers/query-errors.test.ts`: pin the 255/256 boundary, priority, chunking exception,
@@ -127,8 +127,8 @@ No tool schema changes, authorization changes, ADT endpoints, or mutations are i
 
 The completed implementation keeps the legacy-length advice behind SAP's parser rejection, preserves
 all more-specific dialect classifiers, and skips the advice when ARC-1 sent generated IN-list chunks.
-The internal classification carries the authored hint separately from the full SAP error, so minimal
-mode formats a status-only prefix without parsing or slicing untrusted error text.
+The internal classifier returns only the authored hint. The public formatter selects the raw SAP
+message or a status-only prefix once, without parsing or slicing untrusted error text.
 
 Live product-path verification after the fix:
 
@@ -137,8 +137,8 @@ Live product-path verification after the fix:
   diagnostic or ADT path; and
 - 8.16, 512 characters: successful query execution, proving that ARC-1 added no preflight ceiling.
 
-Repository gates passed: typecheck, lint (one pre-existing informational suggestion outside this
-change), policy validation, schema/file-size budgets, 196 focused tests, and the complete 6,793-test
+Repository gates passed: typecheck, lint (three pre-existing informational diagnostics outside this
+change), policy validation, schema/file-size budgets, 162 focused tests, and the complete 6,795-test
 unit suite.
 
 ## Draft response
