@@ -159,9 +159,18 @@ The SAP system must trust Cloud Connector's certificates and map them to SAP use
 
 In the SAP **SSL Server Standard** PSE, import the trust anchors needed for both parts of the flow:
 
-1. the issuer of the Cloud Connector system certificate (or the system certificate itself when it is
-   self-signed); and
+1. the **direct issuing CA** of the Cloud Connector system certificate (or the system certificate
+   itself when it is self-signed); and
 2. the Cloud Connector CA certificate that signs the short-lived user certificate.
+
+With an enterprise PKI the system certificate is usually issued by an intermediate CA, not by the
+root. Importing the root CA and the user-certificate CA alone is not enough: the request then fails
+with `502` and `not mutually authenticated` although the principal-propagation login and the
+destination resolution succeeded. Import the intermediate whose DN appears as `ISSUER=` in your
+`icm/trusted_reverse_proxy_<n>` value. It is often already reachable in STRUST from the own
+certificate's issuer chain (**Issuer Certificates → Add to Certificate List**), so no export from
+Cloud Connector is needed. Repeat STRUST and CERTRULE for every ABAP system, even when several
+systems share one Cloud Connector.
 
 Save the PSE and verify the active ICM process uses it. A container image or startup job may recreate
 the PSE during restart; if so, make the repair persistent and test again after a real restart.
@@ -199,6 +208,10 @@ Save the rule, select the imported sample certificate, and confirm that CERTRULE
 intended SAP user. Do not create an issuer-free catch-all `CN=*` rule: it could allow certificates
 from an unrelated trusted CA to participate in SAP-user mapping.
 
+Two SAP GUI quirks seen on SAP_BASIS 750: the **Generate** button and a manually typed `CN=*, *` in
+**Subject Filter** raise `SUSR_CERT116`; leaving the field empty stores `CN=*`. Saved rules cannot
+be edited afterwards — on `already exists (index 0)` delete the old rule and create it again.
+
 ### ICM parameters
 
 Verify these profile parameters (transaction `/nRZ10`):
@@ -219,6 +232,11 @@ SAP_BASIS 750 SP02 test system, for example, reports `login/certificate` and
 entry. Do not leave unknown compatibility parameters in the profile.
 
 The reverse-proxy DN must match exactly, including separators and spaces expected by the ABAP kernel.
+The RZ10 and SMICM input fields silently truncate long values at roughly 130 characters, and PAHI
+truncates at 60, so a long `icm/trusted_reverse_proxy_<n>` subject/issuer pair can look complete in
+the GUI while the stored value is cut off (observed on SAP_BASIS 758). Read the effective value back
+from SMICM, and for long values have the profile file edited at operating-system level instead of
+through RZ10.
 Do not make SSL-certificate logon mandatory solely for ARC-1 or replace existing ICF logon procedures;
 single-target applications may still depend on Basic authentication. No SICF change was required on
 the live-verified SAP_BASIS 758 and 816 systems, and the 750 setup also preserved its existing ICF
@@ -380,6 +398,19 @@ Current ARC-1 releases never route a failed JWT principal-propagation request th
 2. **Check ICM:** Is `icm/HTTPS/verify_client = 1`?
 3. **Check certificate mapping:** Does CERTRULE or VUSREXTID map the certificate subject to a valid SAP user?
 4. **Check user exists:** Does the SAP user exist and is it unlocked?
+5. **Check the Cloud Connector mapping:** the system certificate must not be allowed for user logon.
+   With that option enabled SAP attempts a certificate logon with the Cloud Connector system
+   certificate and ignores the Basic credentials of the startup destination, so even the startup
+   probes return `401`.
+
+### SAP returns 502 "not mutually authenticated"
+
+The destination resolves and Cloud Connector completes the principal-propagation login, but the
+backend request fails with `502` and `not mutually authenticated`. The SSL Server Standard PSE is
+missing the direct issuing CA of the Cloud Connector system certificate — see
+[Certificate trust (STRUST)](#certificate-trust-strust). Also confirm that the DN pair in
+`icm/trusted_reverse_proxy_<n>` was stored completely; RZ10 and SMICM truncate long values without
+an error (see [ICM parameters](#icm-parameters)).
 
 ### Cloud Connector issues
 
