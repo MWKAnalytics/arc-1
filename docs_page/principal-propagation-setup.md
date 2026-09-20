@@ -232,11 +232,15 @@ SAP_BASIS 750 SP02 test system, for example, reports `login/certificate` and
 entry. Do not leave unknown compatibility parameters in the profile.
 
 The reverse-proxy DN must match exactly, including separators and spaces expected by the ABAP kernel.
-The RZ10 and SMICM input fields silently truncate long values at roughly 130 characters, and PAHI
-truncates at 60, so a long `icm/trusted_reverse_proxy_<n>` subject/issuer pair can look complete in
-the GUI while the stored value is cut off (observed on SAP_BASIS 758). Read the effective value back
-from SMICM, and for long values have the profile file edited at operating-system level instead of
-through RZ10.
+RZ10 stores parameter values in a 128-character database field and truncates longer values without
+an error (SAP Note 2215040, *Long profile parameters are truncated*); SMICM shows the same cut, and
+PAHI truncates at 60. A long `icm/trusted_reverse_proxy_<n>` subject/issuer pair therefore looks
+complete in the GUI while the stored value is incomplete (observed on SAP_BASIS 758). Read the
+effective value back from SMICM. For long values either maintain the profile file at operating-system
+level, or split the value into replacement variables in the profile as SAP Notes 2215040 and 681188
+(*Long profile parameters with more than 80 characters*) describe. SAP KBA 3371621, *Common mistakes
+when setting ICM parameters related to SAP Cloud Connector*, covers the three trust parameters this
+setup depends on.
 Do not make SSL-certificate logon mandatory solely for ARC-1 or replace existing ICF logon procedures;
 single-target applications may still depend on Basic authentication. No SICF change was required on
 the live-verified SAP_BASIS 758 and 816 systems, and the 750 setup also preserved its existing ICF
