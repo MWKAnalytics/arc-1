@@ -18,6 +18,12 @@ currently [multi-target mode](multi-target-setup.md), may still change in a mino
 `1.0.0` onward and every `0.9` release are listed individually. `0.1`–`0.8` are summarized, with the
 important `0.7.0` authorization migration retained below.
 
+## 1.3.1 — XSUAA descriptor fix (unreleased)
+
+| Change | Impact | Action |
+|---|---|---|
+| XSUAA redirect URIs ([#813](https://github.com/arc-mcp/arc-1/pull/813)) | `xs-security.json` no longer lists the `cursor://` and `vscode://` redirect URIs that XSUAA now rejects on `cf create-service` and `cf update-service` (`Malformed redirect URIs detected`). Cursor and VS Code are unaffected: ARC-1 validates their redirect URIs itself. | `none` for MTA deployments. For a manually managed instance created from an older copy of the file, remove those entries before the next `cf update-service`. |
+
 ## 1.3.0 — CI, safer writes, and runtime fixes (2026-09-17)
 
 Adds quality gates, bounded relations, safer authoring, and clearer partial-result evidence. Defaults need
