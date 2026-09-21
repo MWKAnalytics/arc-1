@@ -56,23 +56,6 @@ function resolveWithOverrides(overrides: Record<string, string> = {}) {
   return parseArgs([]);
 }
 
-/**
- * XSUAA parses `oauth2-configuration.redirect-uris` when the service instance is created or
- * updated and rejects the WHOLE descriptor over one custom scheme ("Malformed redirect URIs
- * detected" — #812). ARC-1 does not need them there: the OAuth proxy sends XSUAA its own
- * /oauth/callback and validates the client's real redirect URI itself.
- */
-describe('shipped xs-security.json redirect schemes (#812)', () => {
-  it('registers only HTTP(S) callbacks with XSUAA', () => {
-    const descriptor = JSON.parse(readFileSync(join(ROOT, 'xs-security.json'), 'utf8'));
-    const redirects = descriptor['oauth2-configuration']['redirect-uris'] as string[];
-    expect(redirects.length).toBeGreaterThan(0);
-    for (const redirect of redirects) {
-      expect(redirect, 'XSUAA rejects custom-scheme redirect URIs').toMatch(/^https?:\/\//);
-    }
-  });
-});
-
 describe('shipped mta.yaml resolves through the config parser', () => {
   const savedEnv = { ...process.env };
   let stderrSpy: ReturnType<typeof vi.spyOn>;
@@ -213,6 +196,23 @@ describe('shipped mta.yaml resolves through the config parser', () => {
         'xs-security.json',
       ]),
     );
+  });
+
+  it('registers only deployment-owned OAuth paths and keeps the optional UI out of the base requirements (#812)', () => {
+    const xsuaa = resourceDescriptor('arc1-xsuaa');
+    const file = JSON.parse(readFileSync(join(ROOT, 'xs-security.json'), 'utf8'));
+    expect(xsuaa.requires).toEqual([{ name: 'arc1-mcp-api' }]);
+    expect(xsuaa.parameters.config['oauth2-configuration']['redirect-uris']).toEqual([
+      '~{arc1-mcp-api/url}/oauth/callback',
+      '~{arc1-mcp-api/url}/oauth/logged-out',
+    ]);
+    expect(file['oauth2-configuration']['redirect-uris']).toEqual([
+      'http://localhost:*/oauth/callback',
+      'http://localhost:*/oauth/logged-out',
+    ]);
+    const { 'redirect-uris': _redirects, ...baseOauth } = xsuaa.parameters.config['oauth2-configuration'];
+    const { 'redirect-uris': _localRedirects, ...localOauth } = file['oauth2-configuration'];
+    expect(baseOauth).toEqual(localOauth);
   });
 
   it('keeps Audit Log optional while preconfiguring X.509 on the instance and binding', () => {
