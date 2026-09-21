@@ -833,6 +833,23 @@ Use batch activation for RAP stacks where objects depend on each other (DDLS, BD
 
 For failed `DDLS` activation, ARC-1 appends CDS dependency impact buckets and a concrete batch re-activation template derived from where-used results.
 
+On a target resolved as BTP, the exact English missing-inbound-service error for an OData
+V4 UI binding at version `0001` triggers one fresh active-metadata read. Explicit published
+state confirms that the binding is already published; unpublished or unknown state remains
+an error with guidance. The original SAP message is retained. There is no delay, automatic
+second publish, activation or dependency repair. An unresolved target type does not qualify;
+bearer authentication alone is not BTP evidence. Inspect an unpublished binding and its
+inbound-service dependencies before deciding whether to publish again.
+
+All `publish_srvb` calls (including V2/on-prem calls) avoid automatic HTTP replay after
+availability or database-session errors. A 429, 5xx or network failure leaves completion
+unconfirmed: use `SAPRead(type="SRVB", name="…")` to inspect state before another publish.
+Minimal errors retain HTTP status and request-correlation guidance while hiding SAP details.
+Existing authentication/CSRF/content-negotiation handling remains: a 403 on the publish POST
+still refreshes the CSRF token and re-sends once, even when the 403 has another cause. Thus
+one publish invocation can still contain multiple protocol sends. Unpublish and other
+operations keep their existing retry policies.
+
 **Examples:**
 ```
 SAPActivate(type="CLAS", name="ZCL_ORDER")
