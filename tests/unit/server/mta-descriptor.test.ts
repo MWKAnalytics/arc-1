@@ -20,6 +20,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { XSUAA_DEFAULT_REDIRECT_URI_PATTERNS } from '@arc-mcp/xsuaa-auth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
 import { parseArgs } from '../../../src/server/config.js';
@@ -56,16 +57,35 @@ function resolveWithOverrides(overrides: Record<string, string> = {}) {
   return parseArgs([]);
 }
 
-describe('shipped mta.yaml resolves through the config parser', () => {
-  it('registers only HTTP(S) callbacks with XSUAA, keeping IDE callbacks at the proxy (#812)', () => {
+/**
+ * XSUAA parses `oauth2-configuration.redirect-uris` when the service instance is created or
+ * updated and rejects the WHOLE descriptor over one custom scheme ("Malformed redirect URIs
+ * detected" — #812). ARC-1 does not need them there: the OAuth proxy sends XSUAA its own
+ * /oauth/callback and validates the client's real redirect URI itself, against the pattern list
+ * below.
+ */
+describe('shipped xs-security.json is accepted by the XSUAA broker (#812)', () => {
+  it('registers only HTTP(S) callbacks with XSUAA', () => {
     const descriptor = JSON.parse(readFileSync(join(ROOT, 'xs-security.json'), 'utf8'));
     const redirects = descriptor['oauth2-configuration']['redirect-uris'] as string[];
     expect(redirects.length).toBeGreaterThan(0);
     for (const redirect of redirects) {
-      expect(redirect, 'XSUAA rejects the shipped IDE custom-scheme patterns').toMatch(/^https?:\/\//);
+      expect(redirect, 'XSUAA rejects custom-scheme redirect URIs').toMatch(/^https?:\/\//);
     }
   });
 
+  it('keeps the IDE callbacks in the runtime allowlist ARC-1 validates against', () => {
+    expect(XSUAA_DEFAULT_REDIRECT_URI_PATTERNS).toEqual(
+      expect.arrayContaining([
+        'cursor://anysphere.cursor-retrieval/**',
+        'cursor://anysphere.cursor-mcp/**',
+        'vscode://vscode.microsoft-authentication/**',
+      ]),
+    );
+  });
+});
+
+describe('shipped mta.yaml resolves through the config parser', () => {
   const savedEnv = { ...process.env };
   let stderrSpy: ReturnType<typeof vi.spyOn>;
 

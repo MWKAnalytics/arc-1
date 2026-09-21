@@ -46,12 +46,10 @@ The `xs-security.json` file defines scopes, roles, and OAuth configuration:
 cf create-service xsuaa application arc1-xsuaa -c xs-security.json
 ```
 
-> **Use HTTP(S) callbacks in the XSUAA descriptor.** XSUAA validates `oauth2-configuration.redirect-uris` when the
-> instance is created or updated. Rejected IDE callback patterns such as `cursor://` and `vscode://` fail
-> with `Malformed redirect URIs detected`, blocking the whole create or update. The shipped
-> `xs-security.json` lists HTTP(S) redirect URIs only. IDE callback support stays in ARC-1: XSUAA
-> never receives a client's redirect URI (ARC-1 sends its own `/oauth/callback`), and ARC-1 validates
-> the client's redirect URI itself. See [Troubleshooting](#malformed-redirect-uris-detected).
+> **`oauth2-configuration.redirect-uris` takes HTTP(S) URLs only.** XSUAA rejects IDE schemes such as
+> `cursor://` and `vscode://` there, and the rejection fails the whole create or update — see
+> [Troubleshooting](#malformed-redirect-uris-detected). IDE callbacks do not belong in this list: ARC-1
+> sends XSUAA its own `/oauth/callback` and validates the client's redirect URI itself.
 
 The included `xs-security.json` defines 7 scopes:
 
