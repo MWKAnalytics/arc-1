@@ -26,17 +26,19 @@ evidence. The same doc/contract mismatch is filed upstream as arc-mcp/xsuaa-auth
 1. Drop the three lines from `xs-security.json`. No config flag, URL matcher, auth-library
    change or fallback. Broader callback restriction belongs to #678.
 2. Regression in `tests/unit/server/mta-descriptor.test.ts`: the shipped descriptor carries
-   HTTP(S) redirect URIs only, and the runtime allowlist ARC-1 validates against still carries
-   the IDE schemes (the pair is what makes the removal safe).
+   HTTP(S) redirect URIs only. This checks the local descriptor; it does not claim to replace
+   the live broker check or establish installed-client login compatibility.
 3. Operator guidance in `docs_page/xsuaa-setup.md`: MTA installations rebuild and redeploy;
    manually managed XSUAA edits its **complete landscape descriptor** and keeps its other
    settings. A descriptor-only change is not promised to fix every IDE login.
 
 Rejected during review: a six-case provider→callback round trip over the IDE schemes. It
 exercised only `@arc-mcp/xsuaa-auth`'s default pattern constants through a locally built
-provider, so no change in this repository could fail it, and #678 covers the same round trip
-through the real `startHttpServer` with ARC-1's own allowlist. Replaced by the two-line
-allowlist assertion above (−55 lines).
+provider, so it could detect dependency regressions but not a regression in ARC-1's provider
+wiring. #678 covers the callbacks through the real `startHttpServer` with ARC-1's own allowlist.
+The replacement assertion on the dependency's default constants had the same wiring blind
+spot and was removed too. The descriptor regression remains; no temporary assertion needs
+deleting when #678 lands.
 
 ## Validation
 
@@ -63,6 +65,10 @@ release-please rebuilds that branch from main with `force: true`
 next time a `fix:` merges and the changelog changes. The section therefore also carries the #807
 row that #811 currently holds on its own branch. Later fixes in this release add rows to the same
 section.
+
+The [release hold and reconciliation plan](2026-09-21-release-1.3.1.md) is also carried by
+this main-bound PR, so it survives regeneration along with the annotated notes. The release
+PR body remains a convenient copy, not the durable record of the hold.
 
 ## Roadmap
 
