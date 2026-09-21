@@ -46,6 +46,11 @@ The `xs-security.json` file defines scopes, roles, and OAuth configuration:
 cf create-service xsuaa application arc1-xsuaa -c xs-security.json
 ```
 
+> **`oauth2-configuration.redirect-uris` takes HTTP(S) URLs only.** XSUAA rejects IDE schemes such as
+> `cursor://` and `vscode://` there, and the rejection fails the whole create or update — see
+> [Troubleshooting](#malformed-redirect-uris-detected). IDE callbacks do not belong in this list: ARC-1
+> sends XSUAA its own `/oauth/callback` and validates the client's redirect URI itself.
+
 The included `xs-security.json` defines 7 scopes:
 
 | Scope          | Description                                                    | Gates                                                                                        |
@@ -432,6 +437,10 @@ cf restage arc1-mcp-server
 
 Existing bindings and service keys inherit `oauth2-configuration` changes — no rebind needed.
 
+Copies of `xs-security.json` taken before September 2026 may still list `cursor://` and `vscode://`
+redirect URIs. Remove them before `cf update-service`; XSUAA rejects the whole update otherwise
+(see [Troubleshooting](#malformed-redirect-uris-detected)).
+
 ## Calling ARC-1 from another BTP application
 
 The setup above covers a **human at an MCP client** (Claude, Cursor, Eclipse) logging in through the
@@ -538,6 +547,20 @@ Changing ARC-1's XSUAA allowlist does not repair that upstream registration.
 For a mismatch reported by XSUAA instead, review the intended URI in `xs-security.json` and follow
 [Updating xs-security.json](#updating-xs-securityjson) for the MTA or manual lifecycle. Do not add
 another region's wildcard or apply the bare base file to an MTA-owned instance as a shortcut.
+
+### "Malformed redirect URIs detected"
+`cf create-service` or `cf update-service` for the XSUAA instance fails with
+`Error parsing xs-security.json data: Malformed redirect URIs detected. The following URIs are invalid: [cursor://…, vscode://…]`,
+and the instance is not created or updated. XSUAA refuses IDE deep-link schemes in
+`oauth2-configuration.redirect-uris`; descriptors that still carry them are rejected as a whole.
+
+For an MTA-managed service, rebuild and deploy with the corrected descriptor. For a manually managed
+service, remove those entries from its complete landscape descriptor and retry the create/update.
+Preserve its existing app name, scopes and other OAuth settings; do not replace it with an unmodified
+repository template. ARC-1 routes
+the OAuth return through its own `/oauth/callback`, so XSUAA only ever sees that URL. The client's real
+redirect URI, including Cursor and VS Code deep links, is validated by ARC-1's own allowlist in
+`@arc-mcp/xsuaa-auth`, not by XSUAA.
 
 ### "Token has no expiration time"
 API key tokens now include a synthetic expiration (1 year). If you see this error, ensure you're running the latest version of ARC-1.
