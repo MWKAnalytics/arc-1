@@ -202,7 +202,7 @@ describe('handleSAPQuery parser-error ordering', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe('Unknown column "BOGUS" on T000. Available columns: MANDT, MTEXT.');
-    expect(client.runQuery).toHaveBeenCalledWith('SELECT * FROM t000', 1);
+    expect(client.runQuery).toHaveBeenCalledWith('SELECT * FROM t000', 1, { justification: undefined });
   });
 
   it('uses the qualified join alias to enrich an unknown column from the correct table', async () => {
@@ -223,7 +223,7 @@ describe('handleSAPQuery parser-error ordering', () => {
     expect(result.content[0]?.text).toBe(
       'Unknown column "BOGUS" on DD02T. Available columns: TABNAME, DDLANGUAGE, DDTEXT.',
     );
-    expect(client.runQuery).toHaveBeenCalledWith('SELECT * FROM dd02t', 1);
+    expect(client.runQuery).toHaveBeenCalledWith('SELECT * FROM dd02t', 1, { justification: undefined });
   });
 
   it('preserves the SAP error for an unqualified unknown column across multiple sources', async () => {

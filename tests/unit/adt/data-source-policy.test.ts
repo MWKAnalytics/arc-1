@@ -3,9 +3,13 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  DataSourcePolicyError,
   type DataSourcePolicyResolver,
   enforceBlockedDataSources,
+  enforceSensitiveDataSources,
   extractReplacementObject,
+  MAX_JUSTIFICATION_CHARS,
+  normalizeJustification,
   parseCdsDependencyGraph,
 } from '../../../src/adt/data-source-policy.js';
 import { AdtApiError } from '../../../src/adt/errors.js';
@@ -157,6 +161,72 @@ define table demo_sumdist`;
     ).toThrow(/duplicated|malformed/i);
     expect(() => extractReplacementObject("/* @AbapCatalog.replacementObject: 'ONE'")).toThrow(/unterminated/i);
     expect(() => extractReplacementObject("@AbapCatalog.replacementObject: 'ONE")).toThrow(/unterminated/i);
+  });
+});
+
+describe('normalizeJustification', () => {
+  it('treats non-strings, empty and whitespace-only input as absent', () => {
+    expect(normalizeJustification(undefined)).toBeUndefined();
+    expect(normalizeJustification(42)).toBeUndefined();
+    expect(normalizeJustification('')).toBeUndefined();
+    expect(normalizeJustification(' \t\n ')).toBeUndefined();
+  });
+
+  it('collapses whitespace and control characters and bounds the length', () => {
+    expect(normalizeJustification('  audit\u0000 of\n\n customer   master ')).toBe('audit of customer master');
+    expect(normalizeJustification('x'.repeat(MAX_JUSTIFICATION_CHARS + 50))).toHaveLength(MAX_JUSTIFICATION_CHARS);
+  });
+});
+
+describe('enforceSensitiveDataSources', () => {
+  it('does nothing when the list is empty', () => {
+    expect(enforceSensitiveDataSources(['KNA1'], [], undefined)).toEqual([]);
+  });
+
+  it('lets unrelated sources through without a justification', () => {
+    expect(enforceSensitiveDataSources(['SCARR', 'SPFLI'], ['KNA1'], undefined)).toEqual([]);
+  });
+
+  it('pauses an exact match without a justification and names the retry contract', () => {
+    let caught: unknown;
+    try {
+      enforceSensitiveDataSources(['scarr', 'kna1'], ['KNA1'], undefined);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(DataSourcePolicyError);
+    const error = caught as DataSourcePolicyError;
+    expect(error.code).toBe('DATA_SOURCE_SENSITIVE');
+    expect(error.sourcePath).toEqual(['KNA1']);
+    expect(error.matchedSource).toBe('KNA1');
+    expect(error.executed).toBe(false);
+    expect(error.message).toContain('request paused before data execution');
+    expect(error.message).toContain('`justification`');
+    expect(error.message).not.toContain('Operator action');
+  });
+
+  it('returns every matched source exactly once when a justification is present', () => {
+    expect(enforceSensitiveDataSources(['KNA1', 'LFA1', 'KNA1', 'SCARR'], ['LFA1', 'KNA1'], 'audit')).toEqual([
+      'KNA1',
+      'LFA1',
+    ]);
+  });
+
+  it('keeps the minimal client message free of names but actionable', () => {
+    const error = new DataSourcePolicyError(
+      'DATA_SOURCE_SENSITIVE',
+      'KNA1',
+      ['KNA1'],
+      'exact source KNA1 matches SAP_SENSITIVE_DATA_SOURCES and no justification was supplied',
+      { matchedSource: 'KNA1' },
+    );
+    const minimal = error.clientMessage(true);
+    expect(minimal).toContain('DATA_SOURCE_SENSITIVE');
+    expect(minimal).toContain('executed=false');
+    expect(minimal).toContain(`decisionId=${error.decisionId}`);
+    expect(minimal).toContain('`justification`');
+    expect(minimal).not.toContain('KNA1');
+    expect(minimal).not.toContain('SAP_SENSITIVE_DATA_SOURCES');
   });
 });
 

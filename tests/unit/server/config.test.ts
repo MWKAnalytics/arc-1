@@ -39,6 +39,7 @@ describe('parseArgs', () => {
     expect(config.allowTransportWrites).toBe(false);
     expect(config.allowGitWrites).toBe(false);
     expect(config.blockedDataSources).toEqual([]);
+    expect(config.sensitiveDataSources).toEqual([]);
     expect(config.denyActions).toEqual([]);
     expect(config.schemaNullableOptionals).toBe('auto');
     expect(config.multiTargetAllowBasicAuth).toBe(false);
@@ -148,6 +149,34 @@ describe('parseArgs', () => {
     const fromCli = resolveConfig(['--blocked-data-sources', '/dmo/i_flight,spfli']);
     expect(fromCli.config.blockedDataSources).toEqual(['/DMO/I_FLIGHT', 'SPFLI']);
     expect(fromCli.sources.blockedDataSources).toEqual({ flag: '--blocked-data-sources' });
+  });
+
+  it('normalizes, deduplicates, and source-attributes the experimental sensitive data-source list', () => {
+    process.env.SAP_SENSITIVE_DATA_SOURCES = ' kna1,LFA1,kna1 ';
+    const fromEnv = resolveConfig([]);
+    expect(fromEnv.config.sensitiveDataSources).toEqual(['KNA1', 'LFA1']);
+    expect(fromEnv.sources.sensitiveDataSources).toEqual({ env: 'SAP_SENSITIVE_DATA_SOURCES' });
+    // The two lists are independent: a sensitive entry never becomes a blocked one.
+    expect(fromEnv.config.blockedDataSources).toEqual([]);
+
+    const fromCli = resolveConfig(['--sensitive-data-sources', 'pa0002,pa0008']);
+    expect(fromCli.config.sensitiveDataSources).toEqual(['PA0002', 'PA0008']);
+    expect(fromCli.sources.sensitiveDataSources).toEqual({ flag: '--sensitive-data-sources' });
+  });
+
+  it.each([
+    ['empty string', ''],
+    ['single space', ' '],
+  ])('treats a %s sensitive list as off', (_label, value) => {
+    process.env.SAP_SENSITIVE_DATA_SOURCES = value;
+    const { config, sources } = resolveConfig([]);
+    expect(config.sensitiveDataSources).toEqual([]);
+    expect(sources.sensitiveDataSources).toEqual({ env: 'SAP_SENSITIVE_DATA_SOURCES' });
+  });
+
+  it('rejects a malformed sensitive list at startup and names the variable', () => {
+    process.env.SAP_SENSITIVE_DATA_SOURCES = 'KNA1,,LFA1';
+    expect(() => resolveConfig([])).toThrow(/SAP_SENSITIVE_DATA_SOURCES entry #2/);
   });
 
   // Unset / empty / ASCII-whitespace-only are the documented OFF values. They must stay off so the

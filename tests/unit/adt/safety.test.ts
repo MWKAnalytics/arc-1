@@ -34,6 +34,7 @@ describe('Safety System', () => {
       expect(cfg.allowGitWrites).toBe(false);
       expect(cfg.allowedPackages).toEqual(['$TMP']);
       expect(cfg.blockedDataSources).toEqual([]);
+      expect(cfg.sensitiveDataSources).toEqual([]);
       expect(cfg.allowedTransports).toEqual([]);
       expect(cfg.denyActions).toEqual([]);
     });
@@ -609,6 +610,13 @@ describe('Safety System', () => {
       const result = deriveUserSafetyFromProfile(server, profile);
       expect(result.blockedDataSources).toEqual(['USR02', 'SCARR']);
     });
+
+    it('sensitiveDataSources: union means a profile can only add attestation requirements', () => {
+      const server = config({ sensitiveDataSources: ['KNA1'] });
+      const profile = { sensitiveDataSources: ['LFA1', 'KNA1'] };
+      const result = deriveUserSafetyFromProfile(server, profile);
+      expect(result.sensitiveDataSources).toEqual(['KNA1', 'LFA1']);
+    });
   });
 
   describe('describeSafety', () => {
@@ -632,6 +640,10 @@ describe('Safety System', () => {
 
     it('includes blocked data-source count when active', () => {
       expect(describeSafety(config({ blockedDataSources: ['USR02'] }))).toContain('BlockedDataSources=1');
+    });
+
+    it('includes sensitive data-source count when active', () => {
+      expect(describeSafety(config({ sensitiveDataSources: ['KNA1'] }))).toContain('SensitiveDataSources=1');
     });
   });
 });

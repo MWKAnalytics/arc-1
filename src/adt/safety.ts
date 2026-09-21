@@ -68,6 +68,8 @@ export interface SafetyConfig {
   allowGitWrites: boolean;
   /** Experimental exact-name denylist for direct and transitive SQL data sources. */
   blockedDataSources: string[];
+  /** Experimental exact-name sensitive list: direct data reads pause until a justification is supplied. */
+  sensitiveDataSources: string[];
   allowedPackages: string[];
   allowedTransports: string[];
   /** Resolved deny-action patterns from SAP_DENY_ACTIONS. Populated at config-parse time. */
@@ -87,6 +89,7 @@ export function defaultSafetyConfig(): SafetyConfig {
     allowTransportWrites: false,
     allowGitWrites: false,
     blockedDataSources: [],
+    sensitiveDataSources: [],
     allowedPackages: ['$TMP'],
     allowedTransports: [],
     denyActions: [],
@@ -102,6 +105,7 @@ export function unrestrictedSafetyConfig(): SafetyConfig {
     allowTransportWrites: true,
     allowGitWrites: true,
     blockedDataSources: [],
+    sensitiveDataSources: [],
     allowedPackages: [],
     allowedTransports: [],
     denyActions: [],
@@ -371,6 +375,7 @@ export function deriveUserSafety(serverConfig: SafetyConfig, scopes: string[]): 
     allowedPackages: [...serverConfig.allowedPackages],
     allowedTransports: [...serverConfig.allowedTransports],
     blockedDataSources: [...serverConfig.blockedDataSources],
+    sensitiveDataSources: [...serverConfig.sensitiveDataSources],
     denyActions: [...serverConfig.denyActions],
   };
 
@@ -472,6 +477,9 @@ export function deriveUserSafetyFromProfile(
     allowedPackages: intersectList(serverConfig.allowedPackages, profileSafety.allowedPackages),
     allowedTransports: intersectList(serverConfig.allowedTransports, profileSafety.allowedTransports),
     blockedDataSources: [...new Set([...serverConfig.blockedDataSources, ...(profileSafety.blockedDataSources ?? [])])],
+    sensitiveDataSources: [
+      ...new Set([...serverConfig.sensitiveDataSources, ...(profileSafety.sensitiveDataSources ?? [])]),
+    ],
     denyActions: [...new Set([...serverConfig.denyActions, ...(profileSafety.denyActions ?? [])])],
   };
 
@@ -490,6 +498,9 @@ export function describeSafety(config: SafetyConfig): string {
   if (config.allowedPackages.length > 0) parts.push(`Packages=${displayAllowList(config.allowedPackages)}`);
   if (config.allowedTransports.length > 0) parts.push(`Transports=${displayAllowList(config.allowedTransports)}`);
   if (config.blockedDataSources.length > 0) parts.push(`BlockedDataSources=${config.blockedDataSources.length}`);
+  if (config.sensitiveDataSources.length > 0) {
+    parts.push(`SensitiveDataSources=${config.sensitiveDataSources.length}`);
+  }
   if (config.denyActions.length > 0) parts.push(`DenyActions=${config.denyActions.length}`);
   return parts.length === 0 ? 'READ-ONLY' : parts.join(', ');
 }

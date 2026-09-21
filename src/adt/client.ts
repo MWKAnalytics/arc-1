@@ -22,7 +22,11 @@ import type { AdtClientConfig } from './config.js';
 import { defaultAdtClientConfig } from './config.js';
 import { type DataResponseBudget, DataResultScope } from './data-result-context.js';
 import { canonicalDataSourceName } from './data-source-name.js';
-import { CDS_DEPENDENCY_GRAPH_PATH, DataSourceBlocklistGuard } from './data-source-policy.js';
+import {
+  CDS_DEPENDENCY_GRAPH_PATH,
+  DataSourceBlocklistGuard,
+  type DataSourcePolicyRequestOptions,
+} from './data-source-policy.js';
 import { parseTableType, type TableTypeInfo } from './ddic-xml.js';
 import { AdtApiError, AdtSafetyError, isNotFoundError } from './errors.js';
 import { AdtHttpClient, type AdtHttpConfig, type AdtResponse } from './http.js';
@@ -1344,20 +1348,24 @@ export class AdtClient {
 
   /** A fresh guard per logical request; instrumentation never leaks between decisions. */
   private dataSourceBlocklistGuard(): DataSourceBlocklistGuard {
-    return new DataSourceBlocklistGuard(this.safety.blockedDataSources, {
-      searchObject: (name, maxResults) => this.searchObject(name, maxResults),
-      canonicalTableSourceAvailable: this.http.hasDiscoveryData()
-        ? this.http.discoveryAcceptFor('/sap/bc/adt/ddic/tables') !== undefined
-        : undefined,
-      // Canonical /tables source only: the NW 7.50 /structures fallback omits
-      // replacementObject metadata and therefore cannot prove authorization.
-      readTableSource: async (name) => (await this.getTable(name)).source,
-      dependencyGraphAccept: () => this.http.discoveryAcceptFor(CDS_DEPENDENCY_GRAPH_PATH),
-      readDependencyGraph: async (path, accept) => {
-        checkOperation(this.safety, OperationType.Read, 'GetCdsDependencyGraph');
-        return (await this.http.get(path, { Accept: accept })).body;
+    return new DataSourceBlocklistGuard(
+      this.safety.blockedDataSources,
+      {
+        searchObject: (name, maxResults) => this.searchObject(name, maxResults),
+        canonicalTableSourceAvailable: this.http.hasDiscoveryData()
+          ? this.http.discoveryAcceptFor('/sap/bc/adt/ddic/tables') !== undefined
+          : undefined,
+        // Canonical /tables source only: the NW 7.50 /structures fallback omits
+        // replacementObject metadata and therefore cannot prove authorization.
+        readTableSource: async (name) => (await this.getTable(name)).source,
+        dependencyGraphAccept: () => this.http.discoveryAcceptFor(CDS_DEPENDENCY_GRAPH_PATH),
+        readDependencyGraph: async (path, accept) => {
+          checkOperation(this.safety, OperationType.Read, 'GetCdsDependencyGraph');
+          return (await this.http.get(path, { Accept: accept })).body;
+        },
       },
-    });
+      this.safety.sensitiveDataSources,
+    );
   }
 
   /** Create the lazy request-level result scope inherited by nested handler dispatch. */
@@ -1394,13 +1402,14 @@ export class AdtClient {
     tableName: string,
     maxRows = 100,
     sqlFilter?: string,
+    options: DataSourcePolicyRequestOptions = {},
   ): Promise<{ columns: string[]; rows: Record<string, string>[] }> {
     checkOperation(this.safety, OperationType.Query, 'GetTableContents');
     // Canonicalize BEFORE authorizing and before building the URL so the name the policy checks is
     // byte-for-byte the name SAP receives. This runs with the blocklist off too: identifier handling
     // must not depend on policy state.
     const source = canonicalDataSourceName(tableName, 'TABLE_CONTENTS table name');
-    await this.dataSourceBlocklistGuard().enforceTableContents(source, sqlFilter);
+    await this.dataSourceBlocklistGuard().enforceTableContents(source, sqlFilter, options);
     const rowLimit = clampPreviewRows(maxRows);
     // Response memory is bounded per logical request (#739); the URL uses the canonical `source`
     // so the name the policy authorized is byte-for-byte the name SAP receives.
@@ -1417,8 +1426,12 @@ export class AdtClient {
   }
 
   /** Execute freestyle SQL query and return just the rows/columns. */
-  async runQuery(sql: string, maxRows = 100): Promise<{ columns: string[]; rows: Record<string, string>[] }> {
-    const { columns, rows } = await this.runQueryBatch([sql], maxRows);
+  async runQuery(
+    sql: string,
+    maxRows = 100,
+    options: DataSourcePolicyRequestOptions = {},
+  ): Promise<{ columns: string[]; rows: Record<string, string>[] }> {
+    const { columns, rows } = await this.runQueryBatch([sql], maxRows, options);
     return { columns, rows };
   }
 
@@ -1431,8 +1444,9 @@ export class AdtClient {
   async runQueryWithMetrics(
     sql: string,
     maxRows = 100,
+    options: DataSourcePolicyRequestOptions = {},
   ): Promise<{ columns: string[]; rows: Record<string, string>[] } & DataPreviewMeta> {
-    return this.runQueryBatch([sql], maxRows);
+    return this.runQueryBatch([sql], maxRows, options);
   }
 
   /**
@@ -1456,12 +1470,13 @@ export class AdtClient {
   async runQueryBatch(
     statements: string[],
     maxRows = 100,
+    options: DataSourcePolicyRequestOptions = {},
   ): Promise<{ columns: string[]; rows: Record<string, string>[] } & Partial<DataPreviewMeta>> {
     checkOperation(this.safety, OperationType.FreeSQL, 'RunQuery');
     if (statements.length === 0) throw new Error('runQueryBatch requires at least one statement');
 
     // ONE policy decision covering every statement in this logical request.
-    await this.dataSourceBlocklistGuard().enforceSqlBatch(statements);
+    await this.dataSourceBlocklistGuard().enforceSqlBatch(statements, options);
 
     const rowLimit = clampPreviewRows(maxRows);
     return this.withDataResultScope(async (budget, signal) => {
@@ -1502,12 +1517,14 @@ export class AdtClient {
       columns?: string[];
       where?: Array<{ field: string; op: string; value?: string }>;
       maxRows?: number;
+      /** Caller-stated reason when the table is on the configured sensitive list. */
+      justification?: string;
     } = {},
   ): Promise<{ columns: string[]; rows: Record<string, string>[] }> {
     checkOperation(this.safety, OperationType.Query, 'RunTableQuery');
     // One canonical identity: authorize it, then build the statement from the SAME string.
     const source = canonicalDataSourceName(tableName, 'TABLE_QUERY table name');
-    await this.dataSourceBlocklistGuard().enforceSources([source]);
+    await this.dataSourceBlocklistGuard().enforceSources([source], { justification: opts.justification });
     const sql = buildTableQuerySql(source, opts.columns, opts.where);
     const maxRows = clampPreviewRows(opts.maxRows);
     return this.withDataResultScope(async (budget, signal) =>

@@ -95,6 +95,7 @@ Full per-option details (defaults, clamps, layer interactions): [docs_page/confi
 | `SAP_ALLOW_WRITES` | Enable mutations (default false); prerequisite for transport/git writes |
 | `SAP_ALLOW_DATA_PREVIEW` / `SAP_ALLOW_FREE_SQL` | TABLE_CONTENTS preview / freestyle SQL (default false) |
 | `SAP_BLOCKED_DATA_SOURCES` | Experimental exact-name data-source blocklist (default empty/off). Narrows, never enables; strict SQL subset + live CDS/replacement lineage; fails closed. Adds SAP metadata calls, no cache |
+| `SAP_SENSITIVE_DATA_SOURCES` | Experimental exact-name sensitive list (default empty/off). Direct data reads of a listed source pause with `DATA_SOURCE_SENSITIVE` until the caller repeats them with `justification`, which the policy audit event records with the user. Zero SAP calls, no lineage; attestation, not a boundary — the blocklist wins on overlap |
 | `SAP_ALLOW_TRANSPORT_WRITES` / `SAP_ALLOW_GIT_WRITES` | Transport / git mutations (each ALSO needs `SAP_ALLOW_WRITES`) |
 | `SAP_ALLOWED_PACKAGES` | Write allowlist (default `$TMP`): exact, `Z*`, `ZFOO/**` subtree, `*`. Enforced fail-closed on every mutation incl. activation, against the object's REAL package |
 | `SAP_DENY_ACTIONS` | Per-action denial: `Tool`, `Tool.action`, `Tool.glob*` — see docs_page/authorization.md |

@@ -238,6 +238,7 @@ export function buildAdtConfig(
       allowTransportWrites: config.allowTransportWrites,
       allowGitWrites: config.allowGitWrites,
       blockedDataSources: [...config.blockedDataSources],
+      sensitiveDataSources: [...config.sensitiveDataSources],
       allowedPackages: config.allowedPackages,
       allowedTransports: config.allowedTransports,
       denyActions: config.denyActions,

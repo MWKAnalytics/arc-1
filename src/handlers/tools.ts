@@ -550,6 +550,11 @@ export function getToolDefinitions(
             description:
               'For TABLE_QUERY: columns to SELECT (default: all). Example: ["MATNR","BWART","BUDAT","MENGE"].',
           },
+          justification: {
+            type: 'string',
+            description:
+              "TABLE_CONTENTS/TABLE_QUERY, only after a DATA_SOURCE_SENSITIVE pause: the user's confirmed reason for reading the sensitive table; recorded in the audit log.",
+          },
           where: {
             type: 'array',
             description:
@@ -1078,6 +1083,11 @@ export function getToolDefinitions(
           maxRows: {
             type: 'number',
             description: 'Rows (default 100, max 10,000; byte limit may apply sooner).',
+          },
+          justification: {
+            type: 'string',
+            description:
+              "Only after a DATA_SOURCE_SENSITIVE pause: the user's confirmed reason for reading the sensitive table; recorded in the audit log.",
           },
         },
         required: ['sql'],

@@ -44,6 +44,7 @@ function buildReadOnlyRuntimeConfig(
     // Instance-wide and restrictive: every target inherits the server blocklist and no destination
     // or caller can weaken it. Destination-local policy is deliberately not part of v1.
     blockedDataSources: [...safety.blockedDataSources],
+    sensitiveDataSources: [...safety.sensitiveDataSources],
     allowedPackages: [...safety.allowedPackages],
     allowedTransports: [...safety.allowedTransports],
     denyActions: [...new Set([...base.denyActions, ...safety.denyActions])],
@@ -91,7 +92,11 @@ function buildReadOnlyRuntimeConfig(
 
 /** Build the isolated runtime for one discovered target. */
 export function buildMultiTargetConfig(base: ServerConfig, target: TargetDescriptor): ServerConfig {
-  return buildReadOnlyRuntimeConfig(base, targetSafety(target, base.blockedDataSources), target);
+  return buildReadOnlyRuntimeConfig(
+    base,
+    targetSafety(target, base.blockedDataSources, base.sensitiveDataSources),
+    target,
+  );
 }
 
 /**
@@ -110,6 +115,7 @@ export function buildAggregateToolSurfaceConfig(
         allowFreeSQL: targets.some((target) => target.effectivePolicy.allowFreeSQL),
       },
       base.blockedDataSources,
+      base.sensitiveDataSources,
     ),
   );
 }

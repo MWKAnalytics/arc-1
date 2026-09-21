@@ -3,6 +3,7 @@
  * The undici mock + AdtClient + createClient live in ./setup-undici-mock.ts — import that helper
  * and keep all other src-module imports dynamic (see its header for the ordering rules).
  */
+import { readFileSync } from 'node:fs';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdtApiError } from '../../../src/adt/errors.js';
@@ -482,6 +483,122 @@ describe('tool dispatch & cross-cutting handler behavior', () => {
               (event as { event?: string; status?: string }).status === 'error',
           ) as { errorClass?: string } | undefined;
         expect(endEvent?.errorClass).toBe('DataSourcePolicyError:DATA_SOURCE_BLOCKED');
+      } finally {
+        auditSpy.mockRestore();
+      }
+    });
+
+    it.each([
+      ['SAPRead', { type: 'TABLE_QUERY', name: 'KNA1' }],
+      ['SAPQuery', { sql: 'SELECT * FROM KNA1' }],
+    ])('pauses %s on a sensitive source with the retry contract and classifies it in audit', async (tool, args) => {
+      const auditSpy = vi.spyOn(logger, 'emitAudit');
+      try {
+        const safety = { ...unrestrictedSafetyConfig(), sensitiveDataSources: ['KNA1'] };
+        const client = new AdtClient({ baseUrl: 'http://sap:8000', safety });
+        const result = await handleToolCall(
+          client,
+          { ...DEFAULT_CONFIG, allowDataPreview: true, allowFreeSQL: true, sensitiveDataSources: ['KNA1'] },
+          tool,
+          args,
+        );
+        const text = result.content[0]?.text ?? '';
+        expect(result.isError).toBe(true);
+        expect(text).toContain('DATA_SOURCE_SENSITIVE');
+        expect(text).toContain('request paused before data execution');
+        expect(text).toContain('KNA1');
+        expect(text).toContain('`justification`');
+        expect(text).not.toContain('Set SAP_ALLOW_DATA_PREVIEW');
+
+        const endEvent = auditSpy.mock.calls
+          .map(([event]) => event)
+          .find(
+            (event) =>
+              typeof event === 'object' &&
+              event !== null &&
+              (event as { event?: string; status?: string }).event === 'tool_call_end' &&
+              (event as { event?: string; status?: string }).status === 'error',
+          ) as { errorClass?: string } | undefined;
+        expect(endEvent?.errorClass).toBe('DataSourcePolicyError:DATA_SOURCE_SENSITIVE');
+      } finally {
+        auditSpy.mockRestore();
+      }
+    });
+
+    it('keeps the sensitive pause actionable without names in minimal-error mode', async () => {
+      const safety = { ...unrestrictedSafetyConfig(), sensitiveDataSources: ['KNA1'] };
+      const client = new AdtClient({ baseUrl: 'http://sap:8000', safety });
+      const result = await handleToolCall(
+        client,
+        {
+          ...DEFAULT_CONFIG,
+          allowDataPreview: true,
+          allowFreeSQL: true,
+          sensitiveDataSources: ['KNA1'],
+          minimalErrors: true,
+        },
+        'SAPQuery',
+        { sql: 'SELECT * FROM KNA1' },
+      );
+      const text = result.content[0]?.text ?? '';
+      expect(result.isError).toBe(true);
+      expect(text).toContain('DATA_SOURCE_SENSITIVE');
+      expect(text).toContain('executed=false');
+      expect(text).toMatch(/decisionId=dsp_[0-9a-f]+/);
+      expect(text).toContain('`justification`');
+      expect(text).not.toContain('KNA1');
+      expect(text).not.toContain('SAP_SENSITIVE_DATA_SOURCES');
+    });
+
+    it('accepts a justification through the public tool schema and records it in the policy decision', async () => {
+      mockFetch.mockReset();
+      mockFetch.mockResolvedValue(
+        mockResponse(200, readFileSync(new URL('../../fixtures/xml/table-contents.xml', import.meta.url), 'utf8'), {
+          'x-csrf-token': 'T',
+        }),
+      );
+      const auditSpy = vi.spyOn(logger, 'emitAudit');
+      try {
+        const safety = { ...unrestrictedSafetyConfig(), sensitiveDataSources: ['KNA1'] };
+        const client = new AdtClient({ baseUrl: 'http://sap:8000', safety });
+        const result = await handleToolCall(
+          client,
+          { ...DEFAULT_CONFIG, allowDataPreview: true, allowFreeSQL: true, sensitiveDataSources: ['KNA1'] },
+          'SAPRead',
+          { type: 'TABLE_QUERY', name: 'KNA1', justification: 'INC-4711 customer master audit' },
+        );
+        expect(result.isError).toBeFalsy();
+        const decision = auditSpy.mock.calls
+          .map(([event]) => event as unknown as Record<string, unknown>)
+          .find((event) => event.event === 'data_source_policy_decision');
+        expect(decision).toMatchObject({
+          decision: 'allow',
+          sensitiveSources: ['KNA1'],
+          justification: 'INC-4711 customer master audit',
+        });
+      } finally {
+        auditSpy.mockRestore();
+      }
+    });
+
+    it('rejects an oversized justification at the schema before any policy decision', async () => {
+      const auditSpy = vi.spyOn(logger, 'emitAudit');
+      try {
+        const safety = { ...unrestrictedSafetyConfig(), sensitiveDataSources: ['KNA1'] };
+        const client = new AdtClient({ baseUrl: 'http://sap:8000', safety });
+        const result = await handleToolCall(
+          client,
+          { ...DEFAULT_CONFIG, allowDataPreview: true, allowFreeSQL: true, sensitiveDataSources: ['KNA1'] },
+          'SAPQuery',
+          { sql: 'SELECT * FROM KNA1', justification: 'x'.repeat(501) },
+        );
+        expect(result.isError).toBe(true);
+        expect(result.content[0]?.text ?? '').toContain('justification');
+        expect(
+          auditSpy.mock.calls.some(
+            ([event]) => (event as unknown as Record<string, unknown>).event === 'data_source_policy_decision',
+          ),
+        ).toBe(false);
       } finally {
         auditSpy.mockRestore();
       }

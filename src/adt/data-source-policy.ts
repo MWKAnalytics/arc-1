@@ -1,4 +1,4 @@
-/** Experimental exact-name data-source blocklist and live CDS-lineage evaluation. */
+/** Experimental exact-name data-source blocklist, sensitive-source attestation and live CDS-lineage evaluation. */
 
 import { randomBytes } from 'node:crypto';
 import { XMLParser } from 'fast-xml-parser';
@@ -17,6 +17,14 @@ const TABLE_SOURCE_UNAVAILABLE_REASON =
   'the connected SAP system does not advertise the transparent-table source metadata required to prove replacement-object lineage; the standard ADT resource is available from SAP_BASIS 7.52 onward';
 const TABLE_SOURCE_UNKNOWN_404_REASON =
   'ADT discovery was unavailable and the canonical transparent-table source request returned HTTP 404, so replacement-object lineage support could not be established; the standard ADT resource is available from SAP_BASIS 7.52 onward';
+/**
+ * Model-facing next step for a sensitive source. Deliberately identical in normal and minimal mode: it
+ * names no configured entry and no variable, only the retry contract.
+ */
+const SENSITIVE_NEXT_STEP =
+  'You are trying to access a data-sensitive table. Confirm with the user that this access is really ' +
+  'required for the task, then repeat the same request with the `justification` parameter set to the ' +
+  "user's stated reason. The justification is recorded in the server audit log together with the user identity.";
 
 const graphParser = new XMLParser({
   ignoreAttributes: false,
@@ -42,6 +50,7 @@ class DataSourceLineageError extends Error {
  * - `DATA_POLICY_UNAVAILABLE`  SAP cannot expose metadata required to enforce the policy safely.
  * - `DATA_LINEAGE_UNRESOLVED`  SAP metadata/identity/graph/replacement lineage could not be proven.
  * - `DATA_SQL_UNSUPPORTED`     the caller's SQL is outside the strict accepted grammar.
+ * - `DATA_SOURCE_SENSITIVE`    an exact configured sensitive source was requested without a justification.
  *
  * They stay distinguishable on purpose: a model that cannot tell "blocked by policy" from "SQL not
  * supported" cannot self-correct. That does permit coarse membership probing, which is a documented,
@@ -51,7 +60,29 @@ export type DataSourcePolicyErrorCode =
   | 'DATA_SOURCE_BLOCKED'
   | 'DATA_POLICY_UNAVAILABLE'
   | 'DATA_LINEAGE_UNRESOLVED'
-  | 'DATA_SQL_UNSUPPORTED';
+  | 'DATA_SQL_UNSUPPORTED'
+  | 'DATA_SOURCE_SENSITIVE';
+
+/** Upper bound for a caller-supplied justification as stored in the audit event. */
+export const MAX_JUSTIFICATION_CHARS = 500;
+
+/**
+ * Normalize a caller-supplied justification: trim, collapse whitespace and control characters, and
+ * bound the length. Empty or non-string input means "no justification was supplied".
+ */
+export function normalizeJustification(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what is collapsed here
+  const collapsed = raw.replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim();
+  if (collapsed.length === 0) return undefined;
+  return collapsed.length > MAX_JUSTIFICATION_CHARS ? collapsed.slice(0, MAX_JUSTIFICATION_CHARS) : collapsed;
+}
+
+/** Per-request caller input that the policy records but never treats as an authorization. */
+export interface DataSourcePolicyRequestOptions {
+  /** Caller-stated reason for reading a configured sensitive source; recorded in the audit event. */
+  justification?: string;
+}
 
 /** Opaque, bounded, non-secret correlation id shared by the client error and the audit record. */
 export function newDecisionId(): string {
@@ -79,9 +110,12 @@ export class DataSourcePolicyError extends AdtSafetyError {
         ? 'Keep data access disabled until this target can supply the canonical table-source metadata (normally SAP_BASIS 7.52 or newer). Clearing SAP_BLOCKED_DATA_SOURCES leaves every otherwise authorized source eligible and requires security approval.'
         : 'Use a permitted static source, or change SAP_BLOCKED_DATA_SOURCES only after security review.';
     super(
-      `${code}: request denied before data execution (executed=false, decisionId=${decisionId}). ` +
-        `Source path: ${path}. Reason: ${reason}. ` +
-        `Operator action: ${operatorAction}`,
+      code === 'DATA_SOURCE_SENSITIVE'
+        ? `${code}: request paused before data execution (executed=false, decisionId=${decisionId}). ` +
+            `Source path: ${path}. Reason: ${reason}. ${SENSITIVE_NEXT_STEP}`
+        : `${code}: request denied before data execution (executed=false, decisionId=${decisionId}). ` +
+            `Source path: ${path}. Reason: ${reason}. ` +
+            `Operator action: ${operatorAction}`,
     );
     this.name = 'DataSourcePolicyError';
     this.decisionId = decisionId;
@@ -97,12 +131,18 @@ export class DataSourcePolicyError extends AdtSafetyError {
    * the model to act (stable code, executed=false, decision id, and a safe alternative). It does not
    * change the decision and does not reduce what the audit event records.
    *
-   * The four codes stay distinguishable even in minimal mode, which does permit coarse membership
+   * The five codes stay distinguishable even in minimal mode, which does permit coarse membership
    * probing. That is a deliberate, documented trade: a model that cannot tell "blocked by policy"
    * from "SQL not supported" cannot correct itself.
    */
   clientMessage(minimalErrors: boolean): string {
     if (!minimalErrors) return this.message;
+    if (this.code === 'DATA_SOURCE_SENSITIVE') {
+      return (
+        `${this.code}: the request touches a data-sensitive source and was paused before any SAP data ` +
+        `request was executed (executed=false, decisionId=${this.decisionId}). ${SENSITIVE_NEXT_STEP}`
+      );
+    }
     return (
       `${this.code}: the request was denied by the administrator's data-source policy before any SAP ` +
       `data request was executed (executed=false, decisionId=${this.decisionId}). ` +
@@ -187,6 +227,48 @@ export interface DataSourcePolicyBackend {
   readDependencyGraph(path: string, accept: string): Promise<string>;
 }
 
+/** What one allowed decision recorded, beyond the roots themselves. */
+interface DecisionOutcome {
+  directRoots: string[];
+  /** Configured sensitive sources the request touched, present only when a justification was accepted. */
+  sensitiveSources?: string[];
+  justification?: string;
+}
+
+/**
+ * Exact-name check against the configured sensitive list.
+ *
+ * This is an attestation control, not a boundary: direct sources only, zero SAP calls, no lineage,
+ * so it works on every SAP release and never widens or narrows what the blocklist decides. A request
+ * that touches a listed source without a justification is paused with `DATA_SOURCE_SENSITIVE`; with
+ * one, the matched sources are returned so the decision audit event can record them together with
+ * the justification and the calling user.
+ */
+export function enforceSensitiveDataSources(
+  directSources: readonly string[],
+  configuredSensitiveSources: readonly string[],
+  justification: string | undefined,
+): string[] {
+  if (configuredSensitiveSources.length === 0) return [];
+  let sensitive: Set<string>;
+  let roots: string[];
+  try {
+    sensitive = new Set(configuredSensitiveSources.map((name) => canonicalDataSourceName(name)));
+    roots = [...new Set(directSources.map((name) => canonicalDataSourceName(name)))];
+  } catch (error) {
+    throw unresolved('UNKNOWN', [], error instanceof Error ? error.message : String(error));
+  }
+  const matched = roots.filter((name) => sensitive.has(name));
+  if (matched.length === 0 || justification) return matched;
+  throw new DataSourcePolicyError(
+    'DATA_SOURCE_SENSITIVE',
+    matched[0]!,
+    [matched[0]!],
+    `exact source ${matched.join(', ')} matches SAP_SENSITIVE_DATA_SOURCES and no justification was supplied`,
+    { matchedSource: matched[0]! },
+  );
+}
+
 /** Request-scoped adapter from ADT metadata reads to the pure lineage evaluator. */
 export class DataSourceBlocklistGuard {
   /** Per-decision instrumentation. The guard is constructed per logical request and never reused. */
@@ -196,21 +278,34 @@ export class DataSourceBlocklistGuard {
   constructor(
     private readonly blockedSources: string[],
     private readonly backend: DataSourcePolicyBackend,
+    private readonly sensitiveSources: string[] = [],
   ) {}
+
+  /** Either list makes the guard active; both empty means the legacy zero-overhead path. */
+  private get active(): boolean {
+    return this.blockedSources.length > 0 || this.sensitiveSources.length > 0;
+  }
 
   /**
    * Run one policy decision and record exactly one audit event for it, allow or deny.
    *
    * The audit record is the protected copy: it always carries the complete normalized decision, so
-   * an operator can reconstruct a denial even when the client was told almost nothing.
+   * an operator can reconstruct a denial even when the client was told almost nothing. `run` may
+   * call `report` once the direct roots are known so a denial still records them.
    */
-  private async decide(directRootsHint: string[], run: () => Promise<string[]>): Promise<void> {
+  private async decide(
+    directRootsHint: string[],
+    run: (report: (roots: string[]) => void) => Promise<DecisionOutcome>,
+  ): Promise<void> {
     const decisionId = newDecisionId();
     const started = Date.now();
     const fingerprint = dataSourcePolicyFingerprint(this.blockedSources);
     let directRoots = directRootsHint;
     try {
-      directRoots = await run();
+      const outcome = await run((roots) => {
+        directRoots = roots;
+      });
+      directRoots = outcome.directRoots;
       logger.emitAudit({
         timestamp: new Date().toISOString(),
         level: 'info',
@@ -219,6 +314,9 @@ export class DataSourceBlocklistGuard {
         decisionId,
         executed: true,
         directRoots,
+        ...(outcome.sensitiveSources && outcome.sensitiveSources.length > 0
+          ? { sensitiveSources: outcome.sensitiveSources, justification: outcome.justification }
+          : {}),
         policyFingerprint: fingerprint,
         metadataRequests: this.metadataRequests,
         graphNodes: this.graphNodes,
@@ -266,12 +364,18 @@ export class DataSourceBlocklistGuard {
     }
   }
 
-  async enforceTableContents(tableName: string, sqlFilter?: string): Promise<void> {
-    if (this.blockedSources.length === 0) return;
-    if (!sqlFilter?.trim()) return this.enforceSources([tableName]);
+  async enforceTableContents(
+    tableName: string,
+    sqlFilter?: string,
+    options: DataSourcePolicyRequestOptions = {},
+  ): Promise<void> {
+    if (!this.active) return;
+    if (!sqlFilter?.trim()) return this.enforceSources([tableName], options);
 
-    // A filtered DDIC preview is refused whatever the table is, but a directly blocked table still
-    // reports as blocked so the operator sees the real reason.
+    // A filtered DDIC preview is refused whatever the table is — a condition can carry a subquery on
+    // any other source — but a directly blocked table still reports as blocked so the operator sees
+    // the real reason. The sensitive list is not consulted here: the request is refused either way,
+    // and the actionable step is the structured TABLE_QUERY path, not a justification.
     await this.decide([tableName], async () => {
       const source = canonicalDataSourceName(tableName, 'TABLE_CONTENTS table name');
       // Canonicalize the configured list here too. resolveConfig() already stores canonical entries,
@@ -305,9 +409,9 @@ export class DataSourceBlocklistGuard {
    * read the same table cost exactly one lineage resolution, and a source appearing in only one chunk
    * still denies the whole batch.
    */
-  async enforceSqlBatch(statements: string[]): Promise<void> {
-    if (this.blockedSources.length === 0) return;
-    await this.decide([], async () => {
+  async enforceSqlBatch(statements: string[], options: DataSourcePolicyRequestOptions = {}): Promise<void> {
+    if (!this.active) return;
+    await this.decide([], async (report) => {
       const union: string[] = [];
       const seen = new Set<string>();
       for (const statement of statements) {
@@ -318,8 +422,8 @@ export class DataSourceBlocklistGuard {
           }
         }
       }
-      await this.evaluate(union);
-      return union;
+      report(union);
+      return this.evaluateRequest(union, options);
     });
   }
 
@@ -336,15 +440,56 @@ export class DataSourceBlocklistGuard {
     }
   }
 
-  async enforceSources(directSources: string[]): Promise<void> {
-    if (this.blockedSources.length === 0) return;
-    await this.decide(directSources, async () => {
-      await this.evaluate(directSources);
-      return directSources;
-    });
+  async enforceSources(directSources: string[], options: DataSourcePolicyRequestOptions = {}): Promise<void> {
+    if (!this.active) return;
+    await this.decide(directSources, () => this.evaluateRequest(directSources, options));
   }
 
-  /** The evaluation itself, without audit framing, so exactly one event is emitted per request. */
+  /**
+   * One request against both lists, in a fixed order that keeps the cheap, local checks first:
+   *
+   * 1. exact blocklist matches — the strongest denial, zero SAP calls, and it wins over the
+   *    sensitive list when a source is on both;
+   * 2. the sensitive list — exact names, zero SAP calls, pauses without a justification;
+   * 3. blocklist lineage — the only step that talks to SAP, and only when a blocklist is configured.
+   */
+  private async evaluateRequest(
+    directSources: string[],
+    options: DataSourcePolicyRequestOptions,
+  ): Promise<DecisionOutcome> {
+    this.denyExactBlocked(directSources);
+    const justification = normalizeJustification(options.justification);
+    const sensitiveSources = enforceSensitiveDataSources(directSources, this.sensitiveSources, justification);
+    if (this.blockedSources.length > 0) await this.evaluate(directSources);
+    return sensitiveSources.length > 0
+      ? { directRoots: directSources, sensitiveSources, justification }
+      : { directRoots: directSources };
+  }
+
+  /** Exact blocklist preflight, duplicated from the lineage evaluator so it runs before any other check. */
+  private denyExactBlocked(directSources: string[]): void {
+    if (this.blockedSources.length === 0) return;
+    let blocked: Set<string>;
+    let roots: string[];
+    try {
+      blocked = new Set(this.blockedSources.map((name) => canonicalDataSourceName(name)));
+      roots = directSources.map((name) => canonicalDataSourceName(name));
+    } catch (error) {
+      throw unresolved('UNKNOWN', [], error instanceof Error ? error.message : String(error));
+    }
+    const matched = roots.find((name) => blocked.has(name));
+    if (matched) {
+      throw new DataSourcePolicyError(
+        'DATA_SOURCE_BLOCKED',
+        matched,
+        [matched],
+        `exact source ${matched} matches SAP_BLOCKED_DATA_SOURCES`,
+        { matchedSource: matched },
+      );
+    }
+  }
+
+  /** The lineage evaluation itself, without audit framing, so exactly one event is emitted per request. */
   private async evaluate(directSources: string[]): Promise<void> {
     await enforceBlockedDataSources(directSources, this.blockedSources, {
       resolveDirectSource: (name) => this.resolveDirectSource(name),

@@ -167,6 +167,65 @@ describe('BTP Audit Log Sink', () => {
       expect(body).not.toContain('responseBody');
     });
 
+    it('sends the sensitive-source pause and the justified allow as security events, nothing for other policy allows', async () => {
+      const sink = new BTPAuditLogSink(config);
+      const shared = {
+        timestamp: '',
+        requestId: 'REQ-9',
+        user: 'ALICE',
+        policyFingerprint: 'f'.repeat(64),
+        metadataRequests: 0,
+        graphNodes: 0,
+        durationMs: 1,
+      } as const;
+      sink.write({
+        ...shared,
+        level: 'warn',
+        event: 'data_source_policy_decision',
+        decision: 'deny',
+        decisionId: 'dsp_1',
+        code: 'DATA_SOURCE_SENSITIVE',
+        executed: false,
+        directRoots: ['KNA1'],
+        matchedSource: 'KNA1',
+        sourcePath: ['KNA1'],
+        reason: 'exact source KNA1 matches SAP_SENSITIVE_DATA_SOURCES and no justification was supplied',
+      });
+      sink.write({
+        ...shared,
+        level: 'info',
+        event: 'data_source_policy_decision',
+        decision: 'allow',
+        decisionId: 'dsp_2',
+        executed: true,
+        directRoots: ['KNA1'],
+        sensitiveSources: ['KNA1'],
+        justification: 'INC-4711 customer master audit',
+      });
+      sink.write({
+        ...shared,
+        level: 'info',
+        event: 'data_source_policy_decision',
+        decision: 'allow',
+        decisionId: 'dsp_3',
+        executed: true,
+        directRoots: ['SCARR'],
+      });
+      await sink.flush();
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      const calls = fetchSpy.mock.calls.map((call) => ({
+        url: String(call[0]),
+        payload: JSON.parse(String(call[1]?.body)) as { user: string; data: string },
+      }));
+      expect(calls.every((call) => call.url.includes('/security-events'))).toBe(true);
+      expect(calls[0]!.payload.data).toContain('code=DATA_SOURCE_SENSITIVE');
+      expect(calls[0]!.payload.data).toContain('decisionId=dsp_1');
+      expect(calls[1]!.payload.data).toContain('Sensitive sources: [KNA1]');
+      expect(calls[1]!.payload.data).toContain('Justification: "INC-4711 customer master audit"');
+      expect(calls[1]!.payload.user).toBe('ALICE');
+    });
+
     it('attributes the calling agent on tool-call events', async () => {
       const sink = new BTPAuditLogSink(config);
       sink.write({

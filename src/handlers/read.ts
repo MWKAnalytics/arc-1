@@ -740,7 +740,9 @@ export async function handleSAPRead(
     }
     case 'TABLE_CONTENTS': {
       const maxRows = Number(args.maxRows ?? 100);
-      const data = await client.getTableContents(name, maxRows, args.sqlFilter as string | undefined);
+      const data = await client.getTableContents(name, maxRows, args.sqlFilter as string | undefined, {
+        justification: typeof args.justification === 'string' ? args.justification : undefined,
+      });
       return textResult(toolJson(data));
     }
     case 'TABLE_QUERY': {
@@ -749,8 +751,9 @@ export async function handleSAPRead(
       const where = Array.isArray(args.where)
         ? (args.where as Array<{ field: string; op: string; value?: string }>)
         : undefined;
+      const justification = typeof args.justification === 'string' ? args.justification : undefined;
       try {
-        const data = await client.runTableQuery(name, { columns, where, maxRows });
+        const data = await client.runTableQuery(name, { columns, where, maxRows, justification });
         return textResult(toolJson(data));
       } catch (err) {
         // Self-correct an unknown-column error (a bad entry in `columns`/`where`) by listing the
@@ -758,7 +761,7 @@ export async function handleSAPRead(
         const badColumn = extractUnknownColumn(err);
         if (badColumn) {
           try {
-            const { columns: valid } = await client.getTableContents(name, 1);
+            const { columns: valid } = await client.getTableContents(name, 1, undefined, { justification });
             if (valid.length > 0) return errorResult(formatUnknownColumnHint(badColumn, name, valid));
           } catch {
             // best-effort — fall through to the original error

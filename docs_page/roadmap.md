@@ -338,6 +338,12 @@ Confirmation must also survive retries without creating duplicate mutations.
 confirmation UX. Design intent binding, expiry, idempotency, and non-interactive refusal before
 implementation. Complete confirmation before acquiring an ADT lock.
 
+**Adjacent, shipped.** `SAP_SENSITIVE_DATA_SOURCES` pauses direct data reads of listed sources until the
+caller supplies a `justification`, recorded with the user in the policy audit event — a client-agnostic
+attestation control with zero SAP calls. It deliberately does not claim a person agreed: over the tool
+channel ARC-1 cannot tell the model's answer from the user's. A confirmation that provably reaches a
+person (this item, or an out-of-band consent step) remains the open gap.
+
 ## Integration and localization
 
 <a id="feat-22"></a>

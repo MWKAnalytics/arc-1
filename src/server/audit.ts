@@ -152,7 +152,12 @@ export interface DataSourcePolicyDecisionEvent extends AuditEventBase {
   decision: 'allow' | 'deny';
   decisionId: string;
   /** Absent on allow. */
-  code?: 'DATA_SOURCE_BLOCKED' | 'DATA_POLICY_UNAVAILABLE' | 'DATA_LINEAGE_UNRESOLVED' | 'DATA_SQL_UNSUPPORTED';
+  code?:
+    | 'DATA_SOURCE_BLOCKED'
+    | 'DATA_POLICY_UNAVAILABLE'
+    | 'DATA_LINEAGE_UNRESOLVED'
+    | 'DATA_SQL_UNSUPPORTED'
+    | 'DATA_SOURCE_SENSITIVE';
   /** True only if the SAP data request was actually submitted; always false for a policy denial. */
   executed: boolean;
   /** Canonical direct roots of the whole logical request. */
@@ -162,6 +167,10 @@ export interface DataSourcePolicyDecisionEvent extends AuditEventBase {
   /** Deterministic first path from a requested root to the blocked source. */
   sourcePath?: string[];
   reason?: string;
+  /** Configured sensitive sources the allowed request touched; present only with an accepted justification. */
+  sensitiveSources?: string[];
+  /** Caller-stated reason for touching them, whitespace-normalized and bounded. */
+  justification?: string;
   /** Effective policy fingerprint, for correlating a decision with a deployment configuration. */
   policyFingerprint: string;
   /** Evidence for a future caching decision. */

@@ -31,6 +31,9 @@ describe('logEffectivePolicy', () => {
         blockedDataSourcesEnabled: false,
         blockedDataSourcesCount: 0,
         blockedDataSourcesFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+        sensitiveDataSourcesEnabled: false,
+        sensitiveDataSourcesCount: 0,
+        sensitiveDataSourcesFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
         allowedPackages: ['Z*'],
         allowedTransports: [],
         denyActionsCount: 0,
@@ -48,6 +51,7 @@ describe('logEffectivePolicy', () => {
         allowDataPreview: true,
         gzipDataPreviewBody: true,
         blockedDataSources: ['USR02'],
+        sensitiveDataSources: ['KNA1'],
         allowTransportWrites: true,
         allowedPackages: ['$TMP', 'Z*'],
       }),
@@ -69,6 +73,8 @@ describe('logEffectivePolicy', () => {
     // Ordinary startup logs must never carry the exact names.
     expect(humanLine).not.toContain('USR02');
     expect(JSON.stringify(calls)).not.toContain('USR02');
+    expect(humanLine).toMatch(/sensitiveDataSources=1\/[0-9a-f]{12}/);
+    expect(JSON.stringify(calls)).not.toContain('KNA1');
     // A short fingerprint is shown so operators can spot configuration drift between deployments.
     expect(humanLine).toMatch(/blockedDataSources=1\/[0-9a-f]{12}/);
     expect(humanLine).toContain('packages=[$TMP,Z*]');
@@ -154,6 +160,20 @@ describe('detectContradictions', () => {
       makeConfig({ blockedDataSources: ['USR02'], allowDataPreview: false, allowFreeSQL: false }),
     );
     expect(warnings.some((w) => w.includes('blockedDataSources is configured'))).toBe(true);
+  });
+
+  it('flags an unreachable configured sensitive data-source list', () => {
+    const warnings = detectContradictions(
+      makeConfig({ sensitiveDataSources: ['KNA1'], allowDataPreview: false, allowFreeSQL: false }),
+    );
+    expect(warnings.some((w) => w.includes('sensitiveDataSources is configured'))).toBe(true);
+  });
+
+  it('flags a source that is on both lists because the blocklist wins', () => {
+    const warnings = detectContradictions(
+      makeConfig({ blockedDataSources: ['USR02'], sensitiveDataSources: ['USR02', 'KNA1'], allowDataPreview: true }),
+    );
+    expect(warnings).toEqual([expect.stringContaining('1 sensitiveDataSources entry is also in blockedDataSources')]);
   });
 
   it('does not flag the data-source blocklist when a governed data path is reachable', () => {

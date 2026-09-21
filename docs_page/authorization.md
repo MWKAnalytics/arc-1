@@ -137,9 +137,11 @@ With an active list, one logical request is decided exactly once:
 | `DATA_POLICY_UNAVAILABLE` | The target lacks the table-source metadata required to enforce replacement lineage safely, or discovery was unavailable and its canonical table-source request returned `404` (normally SAP_BASIS 7.50/7.51). |
 | `DATA_LINEAGE_UNRESOLVED` | Identity, dependency-graph or replacement lineage could not be proven. |
 | `DATA_SQL_UNSUPPORTED` | The statement is outside the strict accepted SQL grammar. |
+| `DATA_SOURCE_SENSITIVE` | A direct source is on the [sensitive list](#experimental-sensitive-data-source-list) and no `justification` was supplied. Not a denial: the same request with a `justification` runs. |
 
-All four mean the SAP data request was **not executed**. Each carries `executed=false` and an opaque
-`decisionId` that also appears in the audit log.
+All five mean the SAP data request was **not executed**. Each carries `executed=false` and an opaque
+`decisionId` that also appears in the audit log. `DATA_SOURCE_SENSITIVE` is the only one the caller can
+clear itself.
 
 ### What is deliberately unsupported
 
@@ -215,6 +217,71 @@ show no names — startup logs carry enabled, count and a deterministic fingerpr
 a **configuration-drift and correlation signal only**: it is unsalted by design, the candidate name
 space is small and guessable, and it must not be treated as protecting the contents of the list.
 
+## Experimental sensitive data-source list
+
+!!! note "Experimental, default-off, an attestation control — not a boundary"
+    `SAP_SENSITIVE_DATA_SOURCES` (CLI: `--sensitive-data-sources`) shares the blocklist's
+    [value grammar](#value-grammar) and off semantics, but it denies nothing. A direct data read of a
+    listed table or CDS entity is **paused** until the caller repeats it with a `justification`; the
+    justification, the matched sources and the calling user are then recorded in the audit log and the
+    request runs. Any caller can supply a justification, so the list documents *who read what and why* —
+    it never decides *whether*. Use `SAP_BLOCKED_DATA_SOURCES` for sources nobody may read.
+
+    It is release-independent by construction: the check needs no ADT metadata, so it is currently the
+    only data-source control ARC-1 can enforce on SAP_BASIS 7.50/7.51, where the blocklist correctly
+    reports `DATA_POLICY_UNAVAILABLE`. The two are complements, not alternatives: the blocklist proves
+    transitive lineage and denies; this list checks direct names and records.
+
+```bash
+SAP_SENSITIVE_DATA_SOURCES=KNA1,LFA1,PA0002
+```
+
+### How a sensitive request is decided
+
+1. **Capability gate** — as for the blocklist: `SAP_ALLOW_DATA_PREVIEW` / `SAP_ALLOW_FREE_SQL` plus
+   the caller's `data`/`sql` scope. The list can never enable data access.
+2. **Exact blocklist matches** — a source on both lists is denied; the blocklist always wins, and
+   startup warns about the overlap.
+3. **Sensitive list** — the direct sources of the request (every table or entity named in the SQL, or
+   the `TABLE_QUERY`/`TABLE_CONTENTS` table) are compared exactly, uppercased, against the list. Zero
+   SAP calls, no lineage:
+    - listed source, no `justification` → `DATA_SOURCE_SENSITIVE`, `executed=false`, decision id.
+      The message tells the model to confirm with the user that the access is really required and to
+      repeat the same request with `justification`;
+    - listed source, `justification` present → the decision audit event records `sensitiveSources`
+      and the normalized `justification`, and the request continues;
+    - no listed source → the ordinary decision, nothing sensitive recorded.
+4. **Blocklist lineage** — only when a blocklist is configured.
+5. **SAP request.**
+
+`justification` is an optional string parameter on `SAPQuery` and on `SAPRead` for
+`TABLE_CONTENTS` / `TABLE_QUERY`. It is trimmed, whitespace-normalized and capped at 500 characters;
+blank means absent. ARC-1 never interprets it, only records it.
+
+### What it does and does not cover
+
+- **Direct sources only.** A sensitive table reached through a CDS view or a replacement object is not
+  detected — that is the blocklist's job, with its lineage cost. Because the check needs no SAP
+  metadata, it works on every SAP release, including SAP_BASIS 7.50 where the blocklist's
+  replacement-object proof is [unavailable](#cost-and-what-this-is-not).
+- **`TABLE_CONTENTS` with `sqlFilter`** is refused with `DATA_SQL_UNSUPPORTED` while either list is
+  active, because a condition can carry a subquery on any source. Use `TABLE_QUERY`.
+- **ARC-1's own internal reads** are governed exactly as the blocklist governs them: listing a catalog
+  table ARC-1 reads (TADIR, DD03L, …) pauses the feature that reads it. Do not list those.
+- **Extensions** calling `ctx.http` directly are outside both lists.
+- **Not a human checkpoint.** Whether the model asks the user before supplying a `justification` is
+  the client's behavior; ARC-1 cannot tell a person's answer from the model's. Treat the list as
+  accountability and awareness backed by the audit trail, not as consent enforcement.
+
+### Audit trail
+
+Every pause and every justified allow is a `data_source_policy_decision` event carrying the calling
+user, request id, decision id and the matched sources — plus the justification on the allow. With the
+BTP Audit Log sink these two decisions are forwarded to `security-events`; ordinary
+policy allows stay in the server log as before, and the `tool_call_end` of the executed request lands in
+`data-accesses` as always. Exact names appear on the same administrator surfaces as the blocklist;
+startup logs show count and fingerprint only.
+
 ---
 
 <a id="capability-matrix"></a>
@@ -236,6 +303,7 @@ Use this table to answer: "what must be true before this action can run?" For HT
 | Preview named table contents | `data` | `SAP_ALLOW_DATA_PREVIEW=true` | `sql` implies `data` |
 | Authorization trace (`SUAUTHVALTRC`) | `data` | `SAP_ALLOW_DATA_PREVIEW=true` | `SAPDiagnose action=authorization_trace`; on-prem STUSERTRACE read only |
 | Run freestyle SQL | `sql` | `SAP_ALLOW_FREE_SQL=true` | High risk on productive systems |
+| Require an audited justification for listed sources (experimental) | Existing `data`/`sql` scope | `SAP_SENSITIVE_DATA_SOURCES=...` | Pauses direct reads of listed sources until the caller supplies `justification`; records it with the user; cannot enable access; the blocklist wins on overlap. |
 | Apply exact source blocklist (experimental) | Existing `data`/`sql` scope | `SAP_BLOCKED_DATA_SOURCES=...` | Further restricts all three data paths; cannot enable access, and unresolved lineage is denied |
 | Create / update / delete objects | `write` | `SAP_ALLOW_WRITES=true` | `SAP_ALLOWED_PACKAGES` applies; supports exact (`ZFOO`), prefix (`Z*`), and DEVCLASS subtree (`ZFOO/**`) patterns. Subtree resolution is fail-closed on SAP errors. |
 | Activate objects | `write` | `SAP_ALLOW_WRITES=true` | Activation is a mutation |
@@ -417,6 +485,8 @@ SAP_ALLOW_DATA_PREVIEW=true
 SAP_ALLOW_FREE_SQL=true
 # Optional defense in depth; exact names, no wildcards:
 SAP_BLOCKED_DATA_SOURCES=USR02,PA0002
+# Optional accountability: pause listed sources until a justification is recorded
+SAP_SENSITIVE_DATA_SOURCES=KNA1,LFA1
 ```
 
 Users still need `data` / `sql` scopes in HTTP auth mode.

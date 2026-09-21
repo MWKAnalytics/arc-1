@@ -97,7 +97,8 @@ The base `Dockerfile`, `mta.yaml`, `manifest.yml` and `manifest-btp-abap.yml` de
 `SAP_BLOCKED_DATA_SOURCES=""`. That is what makes the one-field rollback reliable: an MTA extension
 can add or override a property but never remove one, so deleting a line does **not** unset an
 already-deployed value. If the base omitted the key, a previously deployed non-empty value could
-survive a deployment intended to clear it.
+survive a deployment intended to clear it. The same descriptors ship `SAP_SENSITIVE_DATA_SOURCES=""`
+for the same reason, and everything above applies to that list unchanged.
 
 Verify the effective value after every deploy with `arc1 config show` or the startup policy log — the
 log reports whether the policy is enabled, how many entries it has, and a fingerprint you can compare

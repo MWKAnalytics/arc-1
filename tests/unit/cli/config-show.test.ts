@@ -29,6 +29,8 @@ describe('config show — resolver contract', () => {
     expect(config.allowWrites).toBe(false);
     expect(config.allowedPackages).toEqual(['$TMP']);
     expect(config.blockedDataSources).toEqual([]);
+    expect(config.sensitiveDataSources).toEqual([]);
+    expect(sources.sensitiveDataSources).toBe('default');
     expect(sources.allowWrites).toBe('default');
     expect(sources.allowedPackages).toBe('default');
     expect(sources.denyActions).toBe('default');
@@ -38,6 +40,7 @@ describe('config show — resolver contract', () => {
     process.env.SAP_ALLOW_WRITES = 'true';
     process.env.SAP_ALLOWED_PACKAGES = '$TMP,Z*';
     process.env.SAP_BLOCKED_DATA_SOURCES = 'USR02';
+    process.env.SAP_SENSITIVE_DATA_SOURCES = 'KNA1';
     const { config, sources } = resolveConfig([]);
     expect(config.allowWrites).toBe(true);
     expect(sources.allowWrites).toEqual({ env: 'SAP_ALLOW_WRITES' });
@@ -45,6 +48,8 @@ describe('config show — resolver contract', () => {
     expect(sources.allowedPackages).toEqual({ env: 'SAP_ALLOWED_PACKAGES' });
     expect(config.blockedDataSources).toEqual(['USR02']);
     expect(sources.blockedDataSources).toEqual({ env: 'SAP_BLOCKED_DATA_SOURCES' });
+    expect(config.sensitiveDataSources).toEqual(['KNA1']);
+    expect(sources.sensitiveDataSources).toEqual({ env: 'SAP_SENSITIVE_DATA_SOURCES' });
   });
 
   it('attributes flag-set values to { flag: --* }', () => {

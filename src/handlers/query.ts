@@ -159,6 +159,8 @@ export async function handleSAPQuery(
 ): Promise<ToolResult> {
   const sql = String(args.sql ?? '');
   const maxRows = Number(args.maxRows ?? 100);
+  // Recorded by the data-source policy when the request touches a configured sensitive source.
+  const justification = typeof args.justification === 'string' ? args.justification : undefined;
   const effectiveMaxRows = clampPreviewRows(maxRows);
   const rowLimitClamped = Number.isFinite(maxRows) && maxRows > 10_000;
   const chunkPlan = planSimpleInListChunking(sql);
@@ -170,7 +172,7 @@ export async function handleSAPQuery(
     // The client owns both the decision and the POSTs; the handler never gets an authorization
     // receipt it could reuse or forge. Metrics come back only for the single-statement case, because
     // an early break on the row cap would make a summed totalRows misleading.
-    const data = await client.runQueryBatch(chunkPlan ? chunkPlan.statements : [sql], maxRows);
+    const data = await client.runQueryBatch(chunkPlan ? chunkPlan.statements : [sql], maxRows, { justification });
     // Surface ADT's own metrics first (real match count + server-side time) — most useful for perf triage
     // ("847 ms, 511927 rows matched") and not buried under a long rows array.
     const out: Record<string, unknown> = {};
@@ -225,7 +227,7 @@ export async function handleSAPQuery(
         const table = resolveUnknownColumnTable(sql, badColumn);
         if (table && /^[A-Za-z0-9_/]+$/.test(table)) {
           try {
-            const { columns } = await client.runQuery(`SELECT * FROM ${table}`, 1);
+            const { columns } = await client.runQuery(`SELECT * FROM ${table}`, 1, { justification });
             if (columns.length > 0) return errorResult(formatUnknownColumnHint(badColumn, table, columns));
           } catch {
             // best-effort — fall through to the generic parser hint / original error

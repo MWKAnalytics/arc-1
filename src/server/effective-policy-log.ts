@@ -29,6 +29,9 @@ export function logEffectivePolicy(config: ServerConfig, sources: Record<string,
     blockedDataSourcesEnabled: config.blockedDataSources.length > 0,
     blockedDataSourcesCount: config.blockedDataSources.length,
     blockedDataSourcesFingerprint: dataSourcePolicyFingerprint(config.blockedDataSources),
+    sensitiveDataSourcesEnabled: config.sensitiveDataSources.length > 0,
+    sensitiveDataSourcesCount: config.sensitiveDataSources.length,
+    sensitiveDataSourcesFingerprint: dataSourcePolicyFingerprint(config.sensitiveDataSources),
     allowedPackages: config.allowedPackages,
     allowedTransports: config.allowedTransports,
     denyActionsCount: config.denyActions.length,
@@ -47,6 +50,8 @@ export function logEffectivePolicy(config: ServerConfig, sources: Record<string,
     `gzipDataPreview=${yn(config.gzipDataPreviewBody)} ` +
     `blockedDataSources=${config.blockedDataSources.length}` +
     `${config.blockedDataSources.length > 0 ? `/${shortPolicyFingerprint(config.blockedDataSources)}` : ''} ` +
+    `sensitiveDataSources=${config.sensitiveDataSources.length}` +
+    `${config.sensitiveDataSources.length > 0 ? `/${shortPolicyFingerprint(config.sensitiveDataSources)}` : ''} ` +
     `denyActions=${config.denyActions.length}`;
   logger.info(line);
 
@@ -68,6 +73,7 @@ export function logEffectivePolicy(config: ServerConfig, sources: Record<string,
     'allowGitWrites',
     'gzipDataPreviewBody',
     'blockedDataSources',
+    'sensitiveDataSources',
     'allowedPackages',
     'allowedTransports',
     'denyActions',
@@ -88,7 +94,9 @@ export function logEffectivePolicy(config: ServerConfig, sources: Record<string,
  *   3. allowedPackages is non-default but allowWrites=false — restriction is unreachable.
  *   4. gzipDataPreviewBody=true while both data-preview gates are false — encoding is unreachable.
  *   5. blockedDataSources is non-empty while both data-preview gates are false — policy is unreachable.
- *   6. denyActions entry already gated by a server flag (informational only).
+ *   6. sensitiveDataSources is non-empty while both data-preview gates are false — same.
+ *   7. a source is on both lists — the blocklist wins and the sensitive entry never applies.
+ *   8. denyActions entry already gated by a server flag (informational only).
  */
 export function detectContradictions(config: ServerConfig): string[] {
   const warnings: string[] = [];
@@ -110,6 +118,20 @@ export function detectContradictions(config: ServerConfig): string[] {
   if (config.blockedDataSources.length > 0 && !config.allowDataPreview && !config.allowFreeSQL) {
     warnings.push(
       'blockedDataSources is configured but allowDataPreview=false and allowFreeSQL=false; no governed data request is reachable.',
+    );
+  }
+
+  if (config.sensitiveDataSources.length > 0 && !config.allowDataPreview && !config.allowFreeSQL) {
+    warnings.push(
+      'sensitiveDataSources is configured but allowDataPreview=false and allowFreeSQL=false; no governed data request is reachable.',
+    );
+  }
+
+  const blocked = new Set(config.blockedDataSources);
+  const onBothLists = config.sensitiveDataSources.filter((source) => blocked.has(source));
+  if (onBothLists.length > 0) {
+    warnings.push(
+      `${onBothLists.length} sensitiveDataSources entr${onBothLists.length === 1 ? 'y is' : 'ies are'} also in blockedDataSources; the blocklist wins and the sensitive entry never applies.`,
     );
   }
 

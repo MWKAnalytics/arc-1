@@ -23,6 +23,7 @@ import type {
   AuthScopeDeniedEvent,
   AuthSharedCreatedEvent,
   DataResponseLimitedEvent,
+  DataSourcePolicyDecisionEvent,
   McpRateLimitedEvent,
   MultiTargetStageFailedEvent,
   SafetyBlockedEvent,
@@ -75,6 +76,13 @@ function categorize(event: AuditEvent): AuditCategory | null {
     case 'tool_call_start':
     case 'tool_call_end':
       return toolCategory(event.tool);
+
+    // Sensitive-source attestation only: the pause without a justification and the allow that recorded
+    // one. Ordinary blocklist decisions stay in the server log; their tool_call_end already reaches BTP.
+    case 'data_source_policy_decision':
+      return event.code === 'DATA_SOURCE_SENSITIVE' || (event.sensitiveSources?.length ?? 0) > 0
+        ? 'security-events'
+        : null;
 
     case 'auth_pp_created':
       return event.level === 'error' ? 'security-events' : null;
@@ -289,6 +297,18 @@ export class BTPAuditLogSink implements LogSink {
             id: { tool: e.tool, requestId: e.requestId ?? '' },
           },
           attributes: attrs,
+        };
+      }
+
+      case 'data_source_policy_decision': {
+        const e = event as DataSourcePolicyDecisionEvent;
+        const code = e.code ? ` code=${e.code}.` : '';
+        const sensitive = e.sensitiveSources?.length ? ` Sensitive sources: [${e.sensitiveSources.join(', ')}].` : '';
+        const justification = e.justification ? ` Justification: "${e.justification}".` : '';
+        const target = e.target ? ` Target: ${e.target}.` : '';
+        return {
+          ...base,
+          data: `Data-source policy ${e.decision}: decisionId=${e.decisionId}.${code} Sources: [${e.directRoots.join(', ')}].${sensitive}${justification} User: ${user}.${target}${agent}`,
         };
       }
 

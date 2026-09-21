@@ -20,6 +20,7 @@ import {
   ATC_BATCH_NAME_PATTERN,
   ATC_BATCH_TYPES,
 } from '../adt/atc-batch.js';
+import { MAX_JUSTIFICATION_CHARS } from '../adt/data-source-policy.js';
 import { DTEL_MAX_LABEL_LENGTHS } from '../adt/ddic-xml.js';
 import { canonicalRevisionSourcePath, isCanonicalHostRelativeAdtPath } from '../adt/path-safety.js';
 import { TEXT_ELEMENT_PARTS as SAPREAD_TEXT_ELEMENT_INCLUDES } from '../adt/text-elements.js';
@@ -225,6 +226,8 @@ export const SAPReadSchema = z
     columns: z.array(z.string()).optional(),
     /** For TABLE_QUERY: structured WHERE conditions ANDed together. */
     where: z.array(TableQueryWhereItemSchema).optional(),
+    /** For TABLE_CONTENTS/TABLE_QUERY after a DATA_SOURCE_SENSITIVE pause; recorded by the policy audit event. */
+    justification: z.string().max(MAX_JUSTIFICATION_CHARS).optional(),
   })
   .strict()
   .superRefine((input, ctx) => validateSapReadInput(input, ctx));
@@ -263,6 +266,8 @@ export const SAPReadSchemaBtp = z
     columns: z.array(z.string()).optional(),
     /** For TABLE_QUERY: structured WHERE conditions ANDed together. */
     where: z.array(TableQueryWhereItemSchema).optional(),
+    /** For TABLE_CONTENTS/TABLE_QUERY after a DATA_SOURCE_SENSITIVE pause; recorded by the policy audit event. */
+    justification: z.string().max(MAX_JUSTIFICATION_CHARS).optional(),
   })
   .strict()
   .superRefine((input, ctx) => validateSapReadInput(input, ctx));
@@ -357,6 +362,8 @@ export const SAPQuerySchema = z
   .object({
     sql: z.string(),
     maxRows: z.coerce.number().optional(),
+    /** Caller-stated reason after a DATA_SOURCE_SENSITIVE pause; recorded by the policy audit event. */
+    justification: z.string().max(MAX_JUSTIFICATION_CHARS).optional(),
   })
   .strict();
 

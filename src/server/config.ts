@@ -102,6 +102,11 @@ export const CLI_CONFIG_OPTION_SPECS: readonly CliConfigOptionSpec[] = [
     valueName: 'names',
     description: 'Experimental exact SQL/CDS source blocklist (comma-separated)',
   },
+  {
+    name: 'sensitive-data-sources',
+    valueName: 'names',
+    description: 'Experimental exact sensitive-source list requiring an audited justification (comma-separated)',
+  },
   { name: 'allowed-packages', valueName: 'patterns', description: 'Comma-separated write package allowlist' },
   { name: 'allowed-transports', valueName: 'ids', description: 'Comma-separated transport allowlist' },
   { name: 'deny-actions', valueName: 'patterns', description: 'Action deny patterns or file path' },
@@ -659,6 +664,22 @@ export function resolveConfig(args: string[]): { config: ServerConfig; sources: 
       blockedFlag !== undefined ? { flag: '--blocked-data-sources' } : { env: 'SAP_BLOCKED_DATA_SOURCES' };
   } else {
     sources.blockedDataSources = 'default';
+  }
+
+  // Experimental sensitive-source list: same value grammar and off semantics as the blocklist, but an
+  // attestation control (justification + audit) rather than a denial. Blank keeps the one-field
+  // rollback the shipped descriptors rely on.
+  const sensitiveFlag = getFlag('sensitive-data-sources');
+  const sensitiveDataSourcesRaw = sensitiveFlag ?? process.env.SAP_SENSITIVE_DATA_SOURCES;
+  if (sensitiveDataSourcesRaw !== undefined) {
+    config.sensitiveDataSources = parseBlockedDataSourcesCsv(
+      sensitiveDataSourcesRaw,
+      sensitiveFlag !== undefined ? '--sensitive-data-sources' : 'SAP_SENSITIVE_DATA_SOURCES',
+    );
+    sources.sensitiveDataSources =
+      sensitiveFlag !== undefined ? { flag: '--sensitive-data-sources' } : { env: 'SAP_SENSITIVE_DATA_SOURCES' };
+  } else {
+    sources.sensitiveDataSources = 'default';
   }
 
   const pkgs = getFlag('allowed-packages') ?? process.env.SAP_ALLOWED_PACKAGES;

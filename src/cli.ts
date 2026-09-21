@@ -806,6 +806,7 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
                 allowTransportWrites: config.allowTransportWrites,
                 allowGitWrites: config.allowGitWrites,
                 blockedDataSources: config.blockedDataSources,
+                sensitiveDataSources: config.sensitiveDataSources,
                 allowedPackages: config.allowedPackages,
                 allowedTransports: config.allowedTransports,
                 denyActions: config.denyActions,
@@ -828,6 +829,7 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
         ['allowTransportWrites', config.allowTransportWrites],
         ['allowGitWrites', config.allowGitWrites],
         ['blockedDataSources', JSON.stringify(config.blockedDataSources)],
+        ['sensitiveDataSources', JSON.stringify(config.sensitiveDataSources)],
         ['allowedPackages', JSON.stringify(config.allowedPackages)],
         ['allowedTransports', JSON.stringify(config.allowedTransports)],
       ] as const;

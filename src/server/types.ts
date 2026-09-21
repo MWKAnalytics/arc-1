@@ -62,6 +62,8 @@ export interface ServerConfig {
   allowGitWrites: boolean;
   /** Experimental exact-name denylist applied to every SQL/data-preview source and live CDS lineage. */
   blockedDataSources: string[];
+  /** Experimental exact-name sensitive list: reads pause until the caller supplies an audited justification. */
+  sensitiveDataSources: string[];
   allowedPackages: string[];
   allowedTransports: string[];
   /** Resolved deny-action patterns from SAP_DENY_ACTIONS (parsed + validated at startup). */
@@ -274,6 +276,7 @@ export const DEFAULT_CONFIG: ServerConfig = {
   allowTransportWrites: false,
   allowGitWrites: false,
   blockedDataSources: [],
+  sensitiveDataSources: [],
   allowedPackages: ['$TMP'],
   allowedTransports: [],
   denyActions: [],

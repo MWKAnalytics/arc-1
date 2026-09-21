@@ -785,7 +785,11 @@ export function sharedBasicSingleTargetConflicts(
  * a second caller would silently have got an empty blocklist. Making it required turns that omission
  * into a compile error. A destination may narrow the instance policy but can never remove it.
  */
-export function multiTargetSafety(policy: TargetPolicy, blockedDataSources: readonly string[]): SafetyConfig {
+export function multiTargetSafety(
+  policy: TargetPolicy,
+  blockedDataSources: readonly string[],
+  sensitiveDataSources: readonly string[] = [],
+): SafetyConfig {
   return {
     allowWrites: false,
     allowDataPreview: policy.allowDataPreview,
@@ -793,12 +797,17 @@ export function multiTargetSafety(policy: TargetPolicy, blockedDataSources: read
     allowTransportWrites: false,
     allowGitWrites: false,
     blockedDataSources: [...blockedDataSources],
+    sensitiveDataSources: [...sensitiveDataSources],
     allowedPackages: ['$TMP'],
     allowedTransports: [],
     denyActions: [],
   };
 }
 
-export function targetSafety(target: TargetDescriptor, blockedDataSources: readonly string[]): SafetyConfig {
-  return multiTargetSafety(target.effectivePolicy, blockedDataSources);
+export function targetSafety(
+  target: TargetDescriptor,
+  blockedDataSources: readonly string[],
+  sensitiveDataSources: readonly string[] = [],
+): SafetyConfig {
+  return multiTargetSafety(target.effectivePolicy, blockedDataSources, sensitiveDataSources);
 }

@@ -184,6 +184,7 @@ describe('config surface parity (plugin ↔ mcpb)', () => {
     'SAP_ALLOW_DATA_PREVIEW',
     'SAP_ALLOW_FREE_SQL',
     'SAP_BLOCKED_DATA_SOURCES',
+    'SAP_SENSITIVE_DATA_SOURCES',
     'SAP_ALLOW_TRANSPORT_WRITES',
     'SAP_ALLOW_GIT_WRITES',
     'ARC1_UI',

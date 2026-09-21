@@ -63,6 +63,7 @@ Use `SAPRead` for exact implementation behavior, an exact reference, one method 
 | `maxResults` | number | No | For DEVC: maximum package objects to list (default 200, clamped to 1–1000). SAP may truncate larger packages at the requested limit. |
 | `sqlFilter` | string | No | Legacy TABLE_CONTENTS condition. Do not rely on it for portable automation: the 758 endpoint expects a different SELECT-shaped payload, so condition-only filters are unusable there. Prefer TABLE_QUERY `where`. |
 | `columns` | array | No | For TABLE_QUERY: fields to project; omit for all columns. Example: `["MANDT","MATNR"]`. |
+| `justification` | string | No | For TABLE_CONTENTS/TABLE_QUERY, only after a `DATA_SOURCE_SENSITIVE` pause: the user's confirmed reason for reading a table on the administrator's experimental sensitive list. Recorded in the audit log with the calling user; never widens what the blocklist decides. |
 | `where` | array | No | For TABLE_QUERY: ANDed `{field,op,value?}` conditions. Operators: `=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`, `LIKE`, `NOT LIKE`, `IN`, `NOT IN`, `IS NULL`, `IS NOT NULL`. IN values are bare comma-separated values; ARC-1 quotes/escapes them. On 758 use `<>`, because accepted `!=` is sent unchanged and SAP rejects it. |
 | `objectType` | string | No | For API_STATE: SAP object type (CLAS, INTF, PROG, FUGR, etc.) — auto-detected from name if omitted |
 | `version` | string | No | Object version: `active`, `inactive`, or `auto`. Source-bearing types default to `active`. For DTEL metadata, omitted and `auto` use SAP's developer view; explicit `active` or `inactive` is passed to SAP. See [Active vs Inactive Source](#active-vs-inactive-source) below. |
@@ -109,8 +110,8 @@ Use `SAPRead` for exact implementation behavior, an exact reference, one method 
 | `SOBJ` | BOR business object (list methods, or read specific method with `method` param) |
 | `BSP` | BSP/UI5 filestore. List apps without `name`; browse or read with `name="<app>"` and optional case-sensitive `include="<path>"`. `name="<app>/<path>"` is also accepted. |
 | `API_STATE` | API release state (clean core compliance — contract states C0-C4, successor info) |
-| `TABLE_CONTENTS` | Legacy table preview. Useful for an unfiltered sample; filtering and exact row caps are backend-dependent (see parameters above). Prefer `TABLE_QUERY` for deterministic structured projection/filtering. With experimental `SAP_BLOCKED_DATA_SOURCES` active, only unfiltered requests are supported — a `sqlFilter` returns `DATA_SQL_UNSUPPORTED`, so use `TABLE_QUERY`. |
-| `TABLE_QUERY` | Structured table/CDS query through data preview (`columns`, `where`, `maxRows`); requires the data-preview gate. A configured experimental source blocklist checks direct and transitive active CDS/replacement lineage before execution. |
+| `TABLE_CONTENTS` | Legacy table preview. Useful for an unfiltered sample; filtering and exact row caps are backend-dependent (see parameters above). Prefer `TABLE_QUERY` for deterministic structured projection/filtering. With experimental `SAP_BLOCKED_DATA_SOURCES` or `SAP_SENSITIVE_DATA_SOURCES` active, only unfiltered requests are supported — a `sqlFilter` returns `DATA_SQL_UNSUPPORTED`, so use `TABLE_QUERY`. A listed sensitive table pauses with `DATA_SOURCE_SENSITIVE` until `justification` is supplied. |
+| `TABLE_QUERY` | Structured table/CDS query through data preview (`columns`, `where`, `maxRows`); requires the data-preview gate. A configured experimental source blocklist checks direct and transitive active CDS/replacement lineage before execution. A configured experimental sensitive list pauses the read with `DATA_SOURCE_SENSITIVE` until `justification` is supplied. |
 | `DEVC` | Package contents |
 | `SYSTEM` | System info (SID, release, kernel) |
 | `COMPONENTS` | Installed software components |
@@ -956,6 +957,14 @@ The empty default keeps current behavior and adds no metadata calls; a non-empty
 design. This experimental blocklist is not an allowlist and not a replacement for SAP authorization or CDS DCL. See
 [Authorization & Roles](authorization.md#experimental-data-source-blocklist).
 
+When `SAP_SENSITIVE_DATA_SOURCES` is non-empty, a statement whose direct sources include a listed table
+or entity is paused with a fifth code, `DATA_SOURCE_SENSITIVE` (`executed=false`, decision id). The
+message asks the model to confirm with the user that the access is really required and to repeat the
+same statement with `justification` set to the user's reason; the justification, the matched sources
+and the calling user are then recorded in the audit log and the statement runs. Exact direct names only,
+zero SAP calls, no lineage — it works on every release. A source on both lists stays blocked. See
+[Authorization & Roles](authorization.md#experimental-sensitive-data-source-list).
+
 Execute ABAP SQL queries against SAP tables.
 
 > **Self-correcting errors.** An unknown *table* yields a "Did you mean …?" suggestion; an unknown *column* (here or in `SAPRead type=TABLE_QUERY`) yields the table's actual column list (`Unknown column "X" on T000. Available columns: MANDT, MTEXT, …`), so the agent retries in one shot. Best-effort: if column discovery is unavailable (e.g. the `datapreview` endpoint is unbound on older NW 7.50 SPs), the original error is returned unchanged.
@@ -966,6 +975,7 @@ Execute ABAP SQL queries against SAP tables.
 |-----------|------|----------|-------------|
 | `sql` | string | Yes | ABAP SQL SELECT statement |
 | `maxRows` | number | No | Maximum rows (default 100, clamped to 10,000). This is a request ceiling, not a guaranteed result size: wide results can hit the server byte ceiling much earlier. |
+| `justification` | string | No | Only after a `DATA_SOURCE_SENSITIVE` pause: the user's confirmed reason for reading a table on the administrator's experimental sensitive list. Recorded in the audit log with the calling user; never widens what the blocklist decides. |
 
 Successful data-preview bodies share one cumulative allowance across the complete tool call,
 including automatic `IN`-list chunks. The default is 2 MiB of decompressed transfer bytes, counted
