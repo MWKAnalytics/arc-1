@@ -18,11 +18,11 @@ currently [multi-target mode](multi-target-setup.md), may still change in a mino
 `1.0.0` onward and every `0.9` release are listed individually. `0.1`–`0.8` are summarized, with the
 important `0.7.0` authorization migration retained below.
 
-## 1.3.1 — deployment and connectivity fixes (unreleased)
+<!-- Add a release's entry here on a main-bound PR, not on the open release-please branch:
+     release-please rebuilds that branch from main with `force: true`, so a commit added there is
+     lost the next time a feat:/fix: merges. See .claude/commands/release-notes.md. -->
 
-<!-- Annotate 1.3.1 HERE, on main — not on the release-please branch. release-please rebuilds that
-     branch from main with `force: true` (googleapis/release-please `GitHub.updatePullRequest`), so a
-     manual commit there is discarded the next time a fix merges and the changelog changes. -->
+## 1.3.1 — deployment and connectivity fixes (unreleased)
 
 | Change | Impact | Action |
 |---|---|---|
