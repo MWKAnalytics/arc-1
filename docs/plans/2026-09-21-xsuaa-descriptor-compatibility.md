@@ -55,6 +55,15 @@ allowlist assertion above (−55 lines).
   created without the entries, and a full MTA deployment. The IDE conclusion rests on the
   callback-proxy code path, not an IDE session.
 
+## Release notes
+
+The 1.3.1 section is seeded here, on a main-bound PR, rather than on the release-please branch:
+release-please rebuilds that branch from main with `force: true`
+(`GitHub.updatePullRequest` → code-suggester), so an annotation committed there is discarded the
+next time a `fix:` merges and the changelog changes. The section therefore also carries the #807
+row that #811 currently holds on its own branch. Later fixes in this release add rows to the same
+section.
+
 ## Roadmap
 
 No roadmap impact. This repairs the deployment descriptor; SEC-15 and SEC-16 are separate
