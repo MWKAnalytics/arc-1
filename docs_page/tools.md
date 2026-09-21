@@ -1462,9 +1462,31 @@ The lint rules auto-configure based on the detected SAP system:
 - **BTP/Cloud**: `cloud_types` (Error), `strict_sql` (Error), `obsolete_statement` (Error) — enforces ABAP Cloud constraints
 - **On-premise**: `cloud_types` (disabled), `obsolete_statement` (Warning) — more relaxed, allows classic ABAP
 
+Use `SAPLint(action="list_rules")` to inspect the effective configuration:
+
+- `presetSource`: `probe`, `config`, or `default` (on-prem assumed).
+- `abapVersion`: the SAP release, or `unknown`; `abapVersionSource` is `probe`, `config`, or `unknown`.
+- `syntaxVersion`: the actual parser setting after custom configuration, such as `v758` or
+  `{ "release": "Newest", "language": "Cloud" }`. This is distinct from the SAP release.
+- `warnings`: explains unknown-release findings using that effective syntax. Without a detected or
+  configured release, standalone on-prem lint defaults to v702; Cloud and custom syntax settings can differ.
+
+Cached probe settings take precedence over lint's configuration fallback. The probe itself honors
+an explicit `SAP_SYSTEM_TYPE` override and preserves its `config` origin. A custom
+`SAP_ABAPLINT_CONFIG` can override lint syntax without changing the reported SAP release.
+
 **Pre-Write Validation:**
 
-When `--lint-before-write` is enabled (default: true), SAPWrite automatically runs a strict subset of lint rules before writing to SAP. Parser errors and cloud violations block the write. Style issues (keyword case, indentation) never block writes.
+When `--lint-before-write` is enabled (default: true), SAPWrite automatically runs a strict subset of lint rules before writing to SAP. Parser errors and cloud violations block the write. Style issues (keyword case, indentation) never block writes. A blocked-write error includes the actual `abaplint syntax` used for that check, including custom syntax overrides.
+
+`edit_unit` validates the resulting whole source, including unchanged FORMs. When neither probe
+nor configuration supplies a release, this action uses the on-prem parser ceiling (currently v758)
+for unit lookup and pre-write validation. This is an operation-specific grammar fallback, not a
+detected SAP release; standalone `SAPLint list_rules` still reports its own v702 fallback in that
+case. Known probe/config releases and custom lint syntax overrides retain precedence. Configure
+`SAP_ABAP_RELEASE` to the verified target release when detection is unavailable. If SAP accepts a
+statement that local lint rejects, verify these settings before changing valid source; malformed
+replacements still block, and lint should stay enabled while diagnosing the mismatch.
 
 **Execution mode note:**
 
@@ -1493,7 +1515,7 @@ Rules from the config file are merged on top of the auto-detected preset (cloud/
 
 - **`lint`** returns: `[{ rule, message, line, column, endLine, endColumn, severity }]`
 - **`lint_and_fix`** returns: `{ fixedSource, appliedFixes, fixedRules, remainingIssues }` — use `fixedSource` as the corrected code
-- **`list_rules`** returns: `{ preset, abapVersion, enabledRules, disabledRules, rules }` — shows active config
+- **`list_rules`** returns: `{ preset, presetSource, abapVersion, abapVersionSource, syntaxVersion, enabledRules, disabledRules, rules, disabledRuleNames, warnings }` — effective configuration and provenance, as described above
 - **`format`** returns: plain text (formatted ABAP source)
 - **`get_formatter_settings`** returns: `{ indentation, style }`
 - **`set_formatter_settings`** returns: `{ indentation, style }` (effective merged settings)

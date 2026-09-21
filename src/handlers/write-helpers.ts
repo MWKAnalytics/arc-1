@@ -57,10 +57,18 @@ import { errorResult, type ToolResult, textResult } from './shared.js';
  */
 export function buildLintConfigOptions(config: ServerConfig, ruleOverrides?: RuleOverrides): LintConfigOptions {
   // Probe-detected system type is most accurate; fall back to CLI config
-  const systemType = getCachedFeatures()?.systemType ?? (config.systemType !== 'auto' ? config.systemType : undefined);
+  const cachedFeatures = getCachedFeatures();
+  const systemType = cachedFeatures?.systemType ?? (config.systemType !== 'auto' ? config.systemType : undefined);
+  const systemTypeSource = cachedFeatures?.systemType
+    ? (cachedFeatures.systemTypeSource ?? 'probe')
+    : config.systemType !== 'auto'
+      ? 'config'
+      : 'default';
   return {
     systemType,
-    abapRelease: getCachedFeatures()?.abapRelease ?? config.abapRelease,
+    systemTypeSource,
+    abapRelease: cachedFeatures?.abapRelease ?? config.abapRelease,
+    abapReleaseSource: cachedFeatures?.abapRelease ? 'probe' : config.abapRelease ? 'config' : 'unknown',
     configFile: config.abaplintConfig,
     ruleOverrides,
   };
@@ -1048,8 +1056,11 @@ export function runPreWriteLint(
       return {
         blocked: true,
         result: errorResult(
-          `Pre-write lint check failed for ${type} ${name}. Fix these errors before writing:\n${errorLines}\n\n` +
-            'Use SAPLint action="lint_and_fix" to auto-fix, or disable with --lint-before-write=false.',
+          `Pre-write lint check failed for ${type} ${name} (abaplint syntax ${JSON.stringify(result.syntaxVersion)}). ` +
+            `Fix these errors before writing:\n${errorLines}\n\n` +
+            'For parser/version findings, check SAPLint action="list_rules" and the target SAP release before ' +
+            'changing valid source. Use SAPLint action="lint_and_fix" for fixable findings, or ' +
+            'lintBeforeWrite=false to skip this check for this call.',
         ),
       };
     }
