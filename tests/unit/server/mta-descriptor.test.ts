@@ -74,6 +74,8 @@ describe('shipped xs-security.json is accepted by the XSUAA broker (#812)', () =
     }
   });
 
+  // #678 gives ARC-1 its own `redirectUriPatterns`; drop this case when that lands — its
+  // round trip over all seven supported manual callbacks replaces it.
   it('keeps the IDE callbacks in the runtime allowlist ARC-1 validates against', () => {
     expect(XSUAA_DEFAULT_REDIRECT_URI_PATTERNS).toEqual(
       expect.arrayContaining([
