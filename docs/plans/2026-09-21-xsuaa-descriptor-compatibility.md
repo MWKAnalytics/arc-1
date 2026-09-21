@@ -31,8 +31,9 @@ their complete landscape descriptor, preserving other settings; see `docs_page/x
 ## Merge and release constraints
 
 Keep the HTTP(S)-scheme regression until #678's exact-list assertion lands; that assertion then
-subsumes it. Combining the PRs also requires resolving `xs-security.json` and `xsuaa-setup.md`
-without losing #813's scheme warning or #678's exact-callback and upgrade guidance.
+subsumes it. `tests/unit/server/mta-descriptor.test.ts` auto-merges and keeps both describes;
+delete `shipped xs-security.json redirect schemes (#812)` deliberately when combining. Resolve
+`xs-security.json` and `xsuaa-setup.md` without losing #813's scheme warning or #678's exact-callback and upgrade guidance.
 
 This main-bound PR carries the annotated release notes and the
 [release hold](2026-09-21-release-readiness.md), which must survive release-please regeneration.

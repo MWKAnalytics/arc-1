@@ -16,10 +16,10 @@ changelog entry for the upcoming version, so the notes can land first and `main`
 
 **Write notes on a main-bound PR, or on the release branch only once nothing else will merge.**
 release-please rebuilds the branch from `main` with [`force: true`](https://github.com/googleapis/release-please/blob/v17.6.0/src/github.ts),
-discarding manual commits when the changelog changes. The guard checks the version, so a lost row is silent.
+discarding manual commits when the changelog changes.
 
-Also run it whenever a released version is missing from the page — `tests/unit/server/release-notes.test.ts`
-fails with the list.
+`tests/unit/server/release-notes.test.ts` requires every released version and all changelog PR links
+in the newest release annotation. Group related PRs in one row when appropriate.
 
 ## Input
 

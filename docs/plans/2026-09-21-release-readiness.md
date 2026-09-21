@@ -14,7 +14,7 @@ Always read the current candidate; its version and contents can change again.
 release-please rebuilds its branch from `main` with `force: true`
 ([implementation](https://github.com/googleapis/release-please/blob/v17.6.0/src/github.ts)).
 Keep annotations on a main-bound PR. The release PR body is only a convenient pointer to this
-hold, and can also be overwritten. The release-notes guard checks versions, not missing rows.
+hold, and can also be overwritten.
 
 ## Before publishing
 
