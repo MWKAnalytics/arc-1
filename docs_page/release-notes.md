@@ -22,7 +22,7 @@ important `0.7.0` authorization migration retained below.
 
 | Change | Impact | Action |
 |---|---|---|
-| XSUAA redirect URIs ([#813](https://github.com/arc-mcp/arc-1/pull/813)) | `xs-security.json` no longer lists the `cursor://` and `vscode://` redirect URIs that XSUAA now rejects on `cf create-service` and `cf update-service` (`Malformed redirect URIs detected`). Cursor and VS Code are unaffected: ARC-1 validates their redirect URIs itself. | `none` for MTA deployments. For a manually managed instance created from an older copy of the file, remove those entries before the next `cf update-service`. |
+| XSUAA redirect URIs ([#813](https://github.com/arc-mcp/arc-1/pull/813)) | `xs-security.json` no longer lists the `cursor://` and `vscode://` redirect URIs that XSUAA now rejects on `cf create-service` and `cf update-service` (`Malformed redirect URIs detected`). IDE callback validation remains in ARC-1. | MTA: rebuild and redeploy. Manual XSUAA: remove those entries from the complete landscape descriptor before creating or updating the service; preserve the other settings. |
 
 ## 1.3.0 — CI, safer writes, and runtime fixes (2026-09-17)
 

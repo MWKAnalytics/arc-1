@@ -57,6 +57,15 @@ function resolveWithOverrides(overrides: Record<string, string> = {}) {
 }
 
 describe('shipped mta.yaml resolves through the config parser', () => {
+  it('registers only HTTP(S) callbacks with XSUAA, keeping IDE callbacks at the proxy (#812)', () => {
+    const descriptor = JSON.parse(readFileSync(join(ROOT, 'xs-security.json'), 'utf8'));
+    const redirects = descriptor['oauth2-configuration']['redirect-uris'] as string[];
+    expect(redirects.length).toBeGreaterThan(0);
+    for (const redirect of redirects) {
+      expect(redirect, 'XSUAA rejects the shipped IDE custom-scheme patterns').toMatch(/^https?:\/\//);
+    }
+  });
+
   const savedEnv = { ...process.env };
   let stderrSpy: ReturnType<typeof vi.spyOn>;
 

@@ -1,4 +1,9 @@
-import { createOAuthCallbackHandler, OAuthStateCodec, StatelessDcrClientStore } from '@arc-mcp/xsuaa-auth';
+import {
+  createOAuthCallbackHandler,
+  createXsuaaOAuthProvider,
+  OAuthStateCodec,
+  StatelessDcrClientStore,
+} from '@arc-mcp/xsuaa-auth';
 import express from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
@@ -23,6 +28,62 @@ function buildAppWithStore(codec: OAuthStateCodec, store: StatelessDcrClientStor
 function clientParsedState(location: string): string | null {
   return new URL(location).searchParams.get('state');
 }
+
+describe('IDE callbacks stay behind the XSUAA callback proxy (#812)', () => {
+  const callbacks = [
+    'cursor://anysphere.cursor-retrieval/callback',
+    'cursor://anysphere.cursor-mcp/callback',
+    'vscode://vscode.microsoft-authentication/callback',
+  ];
+
+  for (const registration of ['manual', 'dcr'] as const) {
+    it.each(callbacks)(`${registration}: routes %s through the server callback`, async (redirectUri) => {
+      const serverUrl = 'https://arc1.example.test';
+      const { provider, clientStore, stateCodec } = createXsuaaOAuthProvider(
+        {
+          url: 'https://tenant.authentication.example.test',
+          clientid: TEST_CLIENT_ID,
+          clientsecret: SECRET,
+          xsappname: 'arc1-test!t1',
+          uaadomain: 'authentication.example.test',
+        },
+        serverUrl,
+        { dcrSigningSecret: SECRET },
+      );
+      if (registration === 'manual') clientStore.ensureRedirectUri(TEST_CLIENT_ID, redirectUri);
+      const client =
+        registration === 'dcr'
+          ? await clientStore.registerClient({ redirect_uris: [redirectUri] })
+          : await clientStore.getClient(TEST_CLIENT_ID);
+      expect(client).toBeDefined();
+      expect(await clientStore.checkRedirectUri(client!.client_id, redirectUri)).toBe('ok');
+
+      let upstreamLocation = '';
+      await provider.authorize(
+        client!,
+        { redirectUri, state: 'original+state==', codeChallenge: 'test-pkce-challenge', scopes: ['read'] },
+        {
+          redirect: (url) => {
+            upstreamLocation = url;
+          },
+        },
+      );
+      const upstream = new URL(upstreamLocation);
+      expect(upstream.origin).toBe('https://tenant.authentication.example.test');
+      expect(upstream.searchParams.get('redirect_uri')).toBe(`${serverUrl}/oauth/callback`);
+      expect(upstream.searchParams.get('client_id')).toBe(TEST_CLIENT_ID);
+
+      const res = await request(buildAppWithStore(stateCodec, clientStore))
+        .get('/oauth/callback')
+        .query({ code: 'IDE_CODE', state: upstream.searchParams.get('state') });
+      expect(res.status).toBe(302);
+      const callback = new URL(res.headers.location as string);
+      expect(`${callback.protocol}//${callback.host}${callback.pathname}`).toBe(redirectUri);
+      expect(callback.searchParams.get('code')).toBe('IDE_CODE');
+      expect(callback.searchParams.get('state')).toBe('original+state==');
+    });
+  }
+});
 
 describe('createOAuthCallbackHandler — issue #214 round-trip', () => {
   it('redirects to the client with the ORIGINAL "+" state recoverable (the fix)', async () => {

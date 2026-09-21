@@ -46,10 +46,10 @@ The `xs-security.json` file defines scopes, roles, and OAuth configuration:
 cf create-service xsuaa application arc1-xsuaa -c xs-security.json
 ```
 
-> **Custom URI schemes are rejected.** XSUAA validates `oauth2-configuration.redirect-uris` when the
-> instance is created or updated and refuses IDE deep-link schemes such as `cursor://` and `vscode://`
-> with `Malformed redirect URIs detected`; the whole create or update fails. The shipped
-> `xs-security.json` therefore lists HTTP(S) redirect URIs only. Cursor and VS Code still work: XSUAA
+> **Use HTTP(S) callbacks in the XSUAA descriptor.** XSUAA validates `oauth2-configuration.redirect-uris` when the
+> instance is created or updated. Rejected IDE callback patterns such as `cursor://` and `vscode://` fail
+> with `Malformed redirect URIs detected`, blocking the whole create or update. The shipped
+> `xs-security.json` lists HTTP(S) redirect URIs only. IDE callback support stays in ARC-1: XSUAA
 > never receives a client's redirect URI (ARC-1 sends its own `/oauth/callback`), and ARC-1 validates
 > the client's redirect URI itself. See [Troubleshooting](#malformed-redirect-uris-detected).
 
@@ -556,7 +556,10 @@ another region's wildcard or apply the bare base file to an MTA-owned instance a
 and the instance is not created or updated. XSUAA refuses IDE deep-link schemes in
 `oauth2-configuration.redirect-uris`; descriptors that still carry them are rejected as a whole.
 
-Remove those entries from your copy of `xs-security.json` and retry. Nothing else changes: ARC-1 routes
+For an MTA-managed service, rebuild and deploy with the corrected descriptor. For a manually managed
+service, remove those entries from its complete landscape descriptor and retry the create/update.
+Preserve its existing app name, scopes and other OAuth settings; do not replace it with an unmodified
+repository template. ARC-1 routes
 the OAuth return through its own `/oauth/callback`, so XSUAA only ever sees that URL. The client's real
 redirect URI, including Cursor and VS Code deep links, is validated by ARC-1's own allowlist in
 `@arc-mcp/xsuaa-auth`, not by XSUAA.
