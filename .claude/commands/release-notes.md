@@ -14,6 +14,14 @@ command adds the context next to it, never inside it.
 **While the release-please PR is open**, before merging it. The PR body already contains the exact
 changelog entry for the upcoming version, so the notes can land first and `main` never goes red.
 
+**Write the notes on `main`, or on that branch only once nothing else will merge.** release-please
+rebuilds its release branch from `main` with `force: true`
+([`GitHub.updatePullRequest`](https://github.com/googleapis/release-please/blob/main/src/github.ts)),
+so a commit added there is discarded the next time a `feat:`/`fix:` merges and the changelog
+changes. Annotating from a main-bound PR — or as the last step before merging the release — is what
+keeps the entry. The CI guard only checks that the *version* is annotated, so a row lost this way is
+silent.
+
 Also run it whenever a released version is missing from the page — `tests/unit/server/release-notes.test.ts`
 fails with the list.
 
