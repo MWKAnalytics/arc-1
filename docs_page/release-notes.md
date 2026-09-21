@@ -22,10 +22,11 @@ important `0.7.0` authorization migration retained below.
      release-please rebuilds that branch from main with `force: true`, so a commit added there is
      lost the next time a feat:/fix: merges. See .claude/commands/release-notes.md. -->
 
-## 1.3.1 — deployment and connectivity fixes (unreleased)
+## 1.4.0 — extension reports and deployment fixes (unreleased)
 
 | Change | Impact | Action |
 |---|---|---|
+| Extension report execution ([#829](https://github.com/arc-mcp/arc-1/pull/829)) | Extensions can call `ctx.run.programRun(name)` to run an active classic ABAP report and return its list or error text. Selection parameters and variants are not supported. | Optional: requires `SAP_ALLOW_PLUGIN_EXECUTE=true`, `SAP_ALLOW_WRITES=true`, and a `write`-scoped tool; see [Extensions](extensions.md). |
 | XSUAA redirect URIs ([#813](https://github.com/arc-mcp/arc-1/pull/813)) | `xs-security.json` no longer lists the `cursor://` and `vscode://` redirect URIs that XSUAA now rejects on `cf create-service` and `cf update-service` (`Malformed redirect URIs detected`). IDE callback validation remains in ARC-1. | MTA: rebuild and redeploy. Manual XSUAA: remove those entries from the complete landscape descriptor before creating or updating the service; preserve the other settings. |
 | Connectivity session reuse ([#807](https://github.com/arc-mcp/arc-1/pull/807)) | One Connectivity proxy client is kept for the whole stateful SAP operation, including the closing request, preventing premature client disposal from causing `Service cannot be reached` during these writes. | Upgrade the deployed server; no configuration change. |
 
