@@ -73,7 +73,6 @@ sequence.
 | [SEC-15](#sec-15) | Durable DCR signing-key lifecycle | P2 | L | Needs research | Auth / Operations |
 | [COMPAT-06](#compat-06) | Standard outbound proxy support | P2 | M | Ready | Compatibility |
 | [COMPAT-07](#compat-07) | CDS view-entity replacement lineage | P2 | S | Needs research | Compatibility |
-| [COMPAT-08](#compat-08) | Pooled and clustered table policy support | P2 | S | Needs research | Compatibility |
 | [SEC-14](#sec-14) | DNS rebinding and Host-header hardening | P3 | M | Revisit on trigger | Security |
 | [FEAT-03](#feat-03) | BAdI and enhancement authoring | P2 | L | Needs research | ABAP authoring |
 | [FEAT-05](#feat-05) | Safe rename and extract refactorings | P3 | L | Needs research | Developer workflow |
@@ -248,18 +247,6 @@ these remain unmapped and fail closed.
 
 **Resume with.** A live table using a CDS view-entity replacement, verified `VIEWREF`/`STOB` identities,
 and graph-alias/blocklist regressions before broadening the catalog join.
-
-<a id="compat-08"></a>
-### COMPAT-08 — Pooled and clustered table policy support
-
-- **Priority / effort / status:** P2 / S / Needs research
-- **Category:** Compatibility
-
-**Remaining gap.** [#848](https://github.com/arc-mcp/arc-1/pull/848) requires an active transparent
-table row. Pooled/clustered ECC tables fail closed even when no replacement is assigned.
-
-**Resume with.** An authorized ECC fixture and catalog/graph evidence for these table classes; prove
-safe no-replacement handling without weakening unsupported-view or ambiguous-metadata refusals.
 
 <a id="sec-14"></a>
 ### SEC-14 — DNS rebinding and Host-header hardening

@@ -269,6 +269,28 @@ describe('enforceBlockedDataSources', () => {
     });
   });
 
+  it.each([
+    [['RFBLG'], { code: 'DATA_SOURCE_BLOCKED', sourcePath: ['ZV_CLUSTER', 'BSEG', 'RFBLG'], matchedSource: 'RFBLG' }],
+    [['USR02'], undefined],
+  ])('checks the container of a cluster table reached through a CDS graph (blocked %j)', async (blocked, denial) => {
+    // SAP 750 does not emit such nodes for real views (no database view exists), but the graph path
+    // must still apply the container rule if a table node carries one.
+    const graph = parseCdsDependencyGraph(
+      `<elementInfo name="ZV_CLUSTER"><properties><entry key="TYPE" value="CDS_VIEW"/></properties>` +
+        `<elementInfo name="BSEG"><properties><entry key="TYPE" value="TABLE"/></properties></elementInfo>` +
+        `</elementInfo>`,
+    );
+    const r = resolver({
+      resolveDirectSource: vi.fn(async (name: string) => ({ kind: 'cds' as const, name, ddlSource: 'ZV_CLUSTER' })),
+      readCdsDependencyGraph: vi.fn(async () => graph),
+      readTableReplacement: vi.fn(async () => ({ container: 'RFBLG' })),
+    });
+    const decision = enforceBlockedDataSources(['ZV_CLUSTER'], blocked, r);
+    if (denial) await expect(decision).rejects.toMatchObject(denial);
+    else await expect(decision).resolves.toBeUndefined();
+    expect(r.readTableReplacement).toHaveBeenCalledWith('BSEG');
+  });
+
   it('expands a transparent-table replacement object', async () => {
     const resolveDirectSource = vi.fn(async (name: string) =>
       name === 'DEMO_SUMDIST'
