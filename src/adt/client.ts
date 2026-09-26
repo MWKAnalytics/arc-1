@@ -1349,7 +1349,7 @@ export class AdtClient {
       // Fixed authorization metadata: public runQuery would recursively invoke this guard.
       readTableReplacement: async (name) => {
         const table = canonicalDataSourceName(name);
-        const sql = `SELECT d~TABNAME, d~TABCLASS, d~VIEWREF, d~VIEWREF_ERR, l~DDLNAME
+        const sql = `SELECT d~TABNAME, d~TABCLASS, d~VIEWREF, d~VIEWREF_ERR, d~SQLTAB, l~DDLNAME
 FROM DD02L AS d LEFT OUTER JOIN DDLDEPENDENCY AS l
 ON l~OBJECTNAME = d~VIEWREF AND l~OBJECTTYPE = 'VIEW' AND l~STATE = 'A'
 WHERE d~TABNAME = '${table}' AND d~AS4LOCAL = 'A'`;
