@@ -27,6 +27,7 @@ import {
 import { prepareDataPreviewWireBody } from './http-wire-body.js';
 import { fetchWithAttemptBudget } from './request-attempt-budget.js';
 import type { Semaphore } from './semaphore.js';
+import { resolveSapUserAgent } from './user-agent.js';
 
 export type { AdtRequestOptions } from './http-deadline.js';
 
@@ -105,6 +106,7 @@ export interface AdtHttpConfig {
   password?: string;
   client?: string;
   language?: string;
+  userAgent?: string;
   insecure?: boolean;
   /** Gzip non-empty data-preview POST bodies for approved WAF compatibility. */
   gzipDataPreviewBody?: boolean;
@@ -169,6 +171,7 @@ interface AuthenticationAttemptState {
 export class AdtHttpClient {
   private discoveryMap: Map<string, string[]> = new Map();
   private negotiatedHeaders: Map<string, { accept?: string; contentType?: string }> = new Map();
+  private readonly userAgent: string;
   private csrfToken = '';
   private dispatcher: Dispatcher | undefined;
   private longOperationDispatcher: Dispatcher | undefined;
@@ -196,6 +199,7 @@ export class AdtHttpClient {
   private readonly authenticationAttemptState: AuthenticationAttemptState;
   constructor(config: AdtHttpConfig, authenticationAttemptState?: AuthenticationAttemptState) {
     this.config = config;
+    this.userAgent = resolveSapUserAgent(config.userAgent);
     this.authenticationAttemptState = authenticationAttemptState ?? { rejected: false, tail: Promise.resolve() };
 
     // Set up undici dispatcher for TLS configuration (non-proxy mode only).
@@ -1343,7 +1347,7 @@ export class AdtHttpClient {
     // Empty unless the MCP client sent a valid `traceparent`; ARC-1 never originates a trace.
     // Injected here because doFetch is the single outbound choke point (the proxy branch below
     // spreads these headers too).
-    const outbound = { ...headers, ...traceHeaders(getCurrentContext()) };
+    const outbound = { ...headers, 'User-Agent': this.userAgent, ...traceHeaders(getCurrentContext()) };
 
     let response: Response;
     if (this.config.btpProxy) {

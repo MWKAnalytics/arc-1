@@ -85,6 +85,7 @@ Full per-option details (defaults, clamps, layer interactions): [docs_page/confi
 | Variable / Flag | Description |
 |-----------------|-------------|
 | `SAP_URL`, `SAP_USER`, `SAP_PASSWORD`, `SAP_CLIENT` | SAP connection (client default 100) |
+| `SAP_USER_AGENT` / `--user-agent` | Outbound SAP HTTP identifier (default `arc-1/<version>`); printable ASCII, max 256 chars; never put secrets or user identities here |
 | `SAP_LANGUAGE` | Request language AND master language of created objects (default EN, #343) |
 | `SAP_INSECURE` | Skip TLS verification (default false) |
 | `SAP_GZIP_DATAPREVIEW_BODY` | Default-off WAF compatibility: gzip only non-empty POST bodies on exact `/datapreview/{freestyle,ddic}` collection paths; prefer a scoped gateway rule exclusion and require security approval |
@@ -355,7 +356,7 @@ never present mocks or skipped tests as live coverage. Documentation-only change
 - **ESM-only**: local imports need `.js` extensions. **TypeScript strict** (noUnusedLocals/Parameters, Node16 resolution). **Biome**: 2-space, single quotes, 120 cols — auto-fixed on commit, never hand-format.
 - **Logging to stderr only** (`src/server/logger.ts`); `console.log` corrupts MCP JSON-RPC on stdout.
 - Stack: TypeScript 6.0, Node 22+, `@modelcontextprotocol/sdk`, `@abaplint/core`, `undici`, `fast-xml-parser` v5, `better-sqlite3`, `commander`, `ajv` (2020-12), `zod` v4, `vitest`, `biome`.
-- **Releasing** ([release-please](https://github.com/googleapis/release-please)): `feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major; `refactor:`/`test:`/`docs:`/`chore:`/`ci:` → **no release** (use these for behavior-preserving PRs). Version lives in `package.json` + `src/server/server.ts` `VERSION` (the `x-release-please-version` marker — never bump by hand). npm publishes via OIDC trusted publishing. Every released version also needs an annotated entry in `docs_page/release-notes.md` (run `/release-notes`) — CI fails while one is missing.
+- **Releasing** ([release-please](https://github.com/googleapis/release-please)): `feat:` → minor, `fix:` → patch, `feat!:`/`BREAKING CHANGE:` → major; `refactor:`/`test:`/`docs:`/`chore:`/`ci:` → **no release** (use these for behavior-preserving PRs). Version lives in `package.json` + `src/version.ts` `VERSION` (the `x-release-please-version` marker — never bump by hand). npm publishes via OIDC trusted publishing. Every released version also needs an annotated entry in `docs_page/release-notes.md` (run `/release-notes`) — CI fails while one is missing.
 
 ## Security & Architectural Invariants
 
