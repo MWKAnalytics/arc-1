@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HttpRequestEvent } from '../../../src/server/audit.js';
+import { type HttpRequestEvent, redactAuditEvent } from '../../../src/server/audit.js';
 import { logger } from '../../../src/server/logger.js';
 import { mockResponse } from '../../helpers/mock-fetch.js';
 
@@ -36,6 +36,63 @@ describe('stateful ADT session lifecycle', () => {
     else await client.get(closePath);
 
     expect(request(0).headers['X-sap-adt-sessiontype']).toBe('stateless');
+  });
+
+  it.each([200, 400])('audits CSRF HEAD fallback and GET %s without exposing secrets', async (status) => {
+    const emit = vi.spyOn(logger, 'emitAudit').mockImplementation(() => undefined);
+    mockFetch.mockResolvedValueOnce(mockResponse(200, '', {}, ['sap-contextid=PRIVATE_CONTEXT; Path=/']));
+    mockFetch.mockResolvedValueOnce(mockResponse(400, 'PRIVATE_BODY'));
+    mockFetch.mockResolvedValueOnce(mockResponse(status, 'PRIVATE_BODY', { 'x-csrf-token': 'PRIVATE_TOKEN' }));
+    const client = new AdtHttpClient({ ...config, sessionType: 'stateful' });
+    await client.get('/open');
+    if (status === 200) await client.fetchCsrfToken();
+    else await expect(client.fetchCsrfToken()).rejects.toMatchObject({ statusCode: 400 });
+
+    const events = emit.mock.calls
+      .map(([event]) => redactAuditEvent(event))
+      .filter((event) => event.event === 'http_csrf_fetch');
+    expect(events).toMatchObject([
+      {
+        method: 'HEAD',
+        path: '/sap/bc/adt/core/discovery',
+        statusCode: 400,
+        success: false,
+        adtMode: 'stateful',
+        hasContext: true,
+      },
+      {
+        method: 'GET',
+        path: '/sap/bc/adt/core/discovery',
+        statusCode: status,
+        success: status === 200,
+        adtMode: 'stateful',
+        hasContext: true,
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/PRIVATE_|admin|secret/);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('audits tokenless stateless responses before rejecting a login page', async () => {
+    const emit = vi.spyOn(logger, 'emitAudit').mockImplementation(() => undefined);
+    mockFetch.mockResolvedValueOnce(mockResponse(200, ''));
+    mockFetch.mockResolvedValueOnce(
+      mockResponse(200, '<html><body>System Logon</body></html>', { 'content-type': 'text/html' }),
+    );
+    await expect(new AdtHttpClient(config).fetchCsrfToken()).rejects.toMatchObject({ statusCode: 401 });
+    const events = emit.mock.calls
+      .map(([event]) => redactAuditEvent(event))
+      .filter((event) => event.event === 'http_csrf_fetch');
+    expect(events).toHaveLength(2);
+    for (const event of events) {
+      expect(event).toMatchObject({
+        level: 'debug',
+        statusCode: 200,
+        success: false,
+        adtMode: 'unspecified',
+        hasContext: false,
+      });
+    }
   });
 
   it('keeps lock/unlock stateful and closes the same context before returning the result', async () => {
