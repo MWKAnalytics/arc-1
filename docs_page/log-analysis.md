@@ -261,8 +261,8 @@ elicitation events remain in stderr/file logs. Forwarded events are categorized 
 View these in the BTP cockpit under **Instances and Subscriptions > Audit Log Viewer**. For
 programmatic verification or scheduled reviews, read the same records through the Audit Log Retrieval
 API; see [Audit Log delivery evidence](btp-administration.md#audit-log-delivery-evidence). Tool-call
-records carry `object.type = "MCP Tool Call"` and the tool arguments in `args`, truncated at
-500 characters.
+records carry `object.type = "MCP Tool Call"` and, on invocation, redacted arguments in `args` (first 500 characters plus `...`
+when truncated). Completion records carry the outcome.
 
 ## Docker Volume Mount Example
 

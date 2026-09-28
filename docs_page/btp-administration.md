@@ -160,49 +160,45 @@ secret is a future hardening item, not a property that documentation can provide
 
 ## Audit Log delivery evidence
 
-The only proof that the optional Audit Log sink works is a retrieved record, not a startup line. Use
-the free `auditlog-management` service (plan `default`); it reads subaccount-wide, so one instance
-serves every ARC-1 deployment in the subaccount:
+Verify delivery by retrieving a known ARC-1 event; a startup message only confirms
+that the binding has the required fields. Record the time and request ID of a
+successful, harmless tool call, then find its `MCP Tool Call` record in the Audit
+Log Viewer or the retrieval API.
 
-```bash
-cf create-service auditlog-management default arc1-auditlog-read
-cf create-service-key arc1-auditlog-read read-key
-cf service-key arc1-auditlog-read read-key   # url, uaa.url, uaa.clientid, uaa.clientsecret — keep local
-```
+Use `auditlog-management`, plan `default`, for subaccount-wide API retrieval. Reuse
+an approved reader where one exists. Follow SAP's
+[retrieval setup](https://help.sap.com/docs/btp/sap-business-technology-platform/audit-log-retrieval-api-usage-for-subaccounts-in-cloud-foundry-environment),
+prefer its X.509/mTLS credential flow, and store keys outside tickets and source control.
+A client-secret key is an alternative when your credential policy allows it. SAP
+recommends recreating reader bindings/keys at least every 90 days; rotate earlier
+when the credential expires.
 
-Obtain a token from `<uaa.url>/oauth/token` with `grant_type=client_credentials`, then query:
+With a valid OAuth token, query a UTC window around the call:
 
 ```text
 GET <url>/auditlog/v2/auditlogrecords?time_from=2026-09-17T07:00:00&time_to=2026-09-17T08:00:00&category=audit.data-access
 Authorization: Bearer <token>
 ```
 
-SAP documents the API in
-[Audit Log Retrieval API Usage for Subaccounts in the Cloud Foundry Environment](https://help.sap.com/docs/btp/sap-business-technology-platform/audit-log-retrieval-api-usage-for-subaccounts-in-cloud-foundry-environment).
-Behavior observed on eu10:
+The `<url>` comes from the reader credentials. UTC times use `YYYY-MM-DDTHH:MM:SS`;
+without a time filter the API searches the previous 30 days. Pages contain up to
+500 records: URL-encode the `Paging: handle=…` value as the next request's `handle`
+parameter. HTTP 204 means an empty result. Regional rate limits differ; back off
+on 429. If category filtering returns 501 for your retention/landscape, omit it
+and filter retrieved records locally. See SAP's linked API contract for current limits.
 
-- Times are UTC without milliseconds or `Z`. Without `time_from`/`time_to` the API returned the most
-  recent 30 days.
-- Pages hold 500 records, oldest first; continue with the `handle` from the response header
-  `Paging: handle=…`. An empty window returns HTTP 204.
-- The rate limit is 8 requests per second; back off and retry the same page on HTTP 429.
-- ARC-1 tool calls carry `object.type = "MCP Tool Call"`; reads are retrievable with
-  `category=audit.data-access`. The `args` attribute holds the tool arguments, truncated at 500
-  characters.
-- Records identify the writer by `space_id`, not by SAP system. With one ARC-1 application per
-  space under the same name, map spaces to systems on your side.
-- Ingestion takes about ten minutes (11 minutes measured). Platform `security-events` from other
-  spaces appear in the same subaccount stream.
+ARC-1 invocation records have `object.type = "MCP Tool Call"`, a request ID and an
+`args` attribute containing redacted arguments, cut after 500 characters with `...`
+appended. Completion records carry the outcome instead. Use `space_id` for deployment
+attribution and the `target` attribute when present; one space is not necessarily
+one SAP system. Keep retrieved records private.
 
-A client-secret key is the practical choice for an unattended job; SAP recommends X.509 for this
-service too, whose keys are short-lived by default. Recreate client-secret keys at least every 90
-days. Do not confuse the reader with the sink: `auditlog-api` (deprecated) and `auditlog-management`
-never enable writing; only `auditlog` plan `premium` does.
-
-Consider a scheduled check that ARC-1 records still arrive — for example, alert when no
-`MCP Tool Call` record appeared for seven days. An expired binding certificate stops delivery with
-only throttled `BTP Audit Log delivery failed` warnings in the application log; nothing in BTP
-notifies you.
+Delivery is asynchronous: one eu10 check took 11 minutes, which is an observation,
+not a delivery guarantee. Recheck the same known event before diagnosing loss.
+Monitor known traffic and certificate expiry; a quiet server alone is not evidence
+of failure. ARC-1 emits throttled `BTP Audit Log delivery failed` warnings but does
+not configure an external alert for you. The reader does not enable writing:
+ARC-1's sink requires the separate `auditlog` **premium** binding.
 
 ## Audit Log certificate rotation
 
@@ -213,8 +209,8 @@ for direct `cf push`, repeat SAP's
 [X.509 binding procedure](https://help.sap.com/docs/btp/sap-business-technology-platform/audit-log-write-api-for-customers)
 and restage. Check the startup log and delivery of a known audit event afterward (see
 [Audit Log delivery evidence](#audit-log-delivery-evidence)). Rotation recreates only the binding;
-the instance keeps its X.509 configuration. Put the validity end date in a calendar — BTP does not
-notify you, and the sink goes quiet with only throttled warnings in the application log. Do not rotate
+the instance keeps its X.509 configuration. Track the expiry in your monitoring or
+calendar and verify a delivered event after rotation. Do not rotate
 ARC-1's XSUAA binding or DCR signing key as part of this operation.
 
 On SIGTERM/SIGINT, ARC-1 allows up to five seconds to drain requests and flush audit sinks before

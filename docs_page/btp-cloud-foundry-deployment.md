@@ -273,14 +273,17 @@ For a reviewed direct-`cf push` deployment, use SAP's instance and binding comma
 [Audit Log Write API for Customers](https://help.sap.com/docs/btp/sap-business-technology-platform/audit-log-write-api-for-customers),
 then restage `arc1-mcp-server`.
 
-The `auditlog` broker cannot change an existing instance. If `arc1-auditlog` was created earlier
-without the X.509 `xs-security` (for example with a plain `cf create-service auditlog premium`), an
-MTA deploy reports `Updating service "arc1-auditlog" failed: Service broker auditlog failed with:
-Updating service is currently not supported operation` and can still finish with exit 0, leaving the
-instance — and therefore any new binding on it — without X.509. Unbind and delete that instance
-first; the activated resource then recreates it correctly. Audit records already written are kept
-when the instance is deleted. Creating the instance in the BTP cockpit can fail with a generic
-"Couldn't create service instance … Please try again"; the same request through the CLI succeeds.
+If an older `arc1-auditlog` instance lacks the X.509 configuration, a broker may
+reject its update with `Updating service is currently not supported operation`.
+This was observed during an otherwise successful MTA deployment; exit 0 alone did
+not prove that the binding was usable. Inspect the service operation and binding.
+
+For a **dedicated, disposable ARC-1 service instance**, inventory its app bindings
+and service keys, schedule the delivery interruption, then unbind/delete it and
+redeploy the activated MTA resource with the X.509 configuration above. Do not
+apply that procedure to a shared instance without its owner's migration plan.
+Verify retained audit records through the reader before and after the replacement;
+credential replacement is not a substitute for your retention/archive policy.
 
 `cf bind-service` can return `OK` yet produce a `binding-secret` binding. After deployment, check
 `cf logs arc1-mcp-server --recent`: `BTP Audit Log sink enabled` confirms the required fields are
@@ -288,8 +291,8 @@ present; an `ERROR` names missing X.509 fields. Do not print `cf env` or binding
 tickets — they contain the private key. Confirm actual delivery with a known audit event; startup
 validation alone does not prove authentication or delivery. The proof is a record with
 `object.type = "MCP Tool Call"` in the Audit Log Viewer or the Retrieval API — see
-[Audit Log delivery evidence](btp-administration.md#audit-log-delivery-evidence). Allow about ten
-minutes of ingestion delay (11 minutes measured on eu10) before concluding that nothing arrived.
+[Audit Log delivery evidence](btp-administration.md#audit-log-delivery-evidence). Delivery is asynchronous; one eu10 observation took 11 minutes. Recheck the known
+event and delivery warnings before concluding that it was lost.
 
 For expiry and rebinding, see
 [Audit Log certificate rotation](btp-administration.md#audit-log-certificate-rotation).
@@ -672,8 +675,8 @@ buildpack push does not create the seven MTA role collections for you.
 | SAP `403` after PP login | Check the actual propagated user's SAP authorizations |
 | Destination change appears ignored | Restart every ARC-1 instance; only discovered multi-target Basic username/password fields are hot |
 | `BTP Audit Log sink disabled` at startup | The selected premium binding is incomplete; recreate/rebind it with the X.509 instance and binding parameters from step 4 |
-| `Updating service "arc1-auditlog" failed … Updating service is currently not supported operation` during `cf deploy` | The broker cannot change an existing instance; unbind and delete it, then redeploy so the MTA recreates it with X.509 (written records are kept) |
-| Sink enabled, but no `MCP Tool Call` record in the Audit Log Viewer | Wait for ingestion (about ten minutes), then query the [Retrieval API](btp-administration.md#audit-log-delivery-evidence); check that the binding is `x509` and its certificate has not expired |
+| `Updating service "arc1-auditlog" failed … Updating service is currently not supported operation` during `cf deploy` | Inspect the failed service update and follow step 4's ownership and binding checks before replacing an old non-X.509 instance |
+| Sink enabled, but no `MCP Tool Call` record in the Audit Log Viewer | Allow for asynchronous ingestion, then query the [Retrieval API](btp-administration.md#audit-log-delivery-evidence); check that the binding is `x509` and its certificate has not expired |
 | Repeated `BTP Audit Log delivery failed` warning | Check certificate validity, token/API reachability, and service health; rotate the binding before retrying |
 
 ## Official references
