@@ -28,6 +28,7 @@ import { grepSource } from '../context/grep.js';
 import { extractMethod, formatMethodListing, listMethods } from '../context/method-surgery.js';
 import { logger } from '../server/logger.js';
 import { type CacheSecurityContext, inactiveListUserKey, invalidateInactiveList } from './cache-security.js';
+import { readEditableSource } from './editable-source.js';
 import { getCachedFeatures, isBtpSystem } from './feature-cache.js';
 import {
   detectLocalHandlerInclude,
@@ -36,6 +37,7 @@ import {
   objectUrlForTypeRaw,
 } from './object-types.js';
 import { errorResult, type ToolResult, textResult, toolJson } from './shared.js';
+import { handleSyntaxCheck } from './syntax.js';
 
 const BTP_HINTS: Record<string, string> = {
   PROG: 'Executable programs (reports) are not available on BTP ABAP Environment. Use CLAS with IF_OO_ADT_CLASSRUN for console applications.',
@@ -166,10 +168,15 @@ export async function handleSAPRead(
   const name = String(args.name ?? '');
   const requestedVersion = (args.version ?? 'active') as RequestedSourceVersion;
 
+  if (type === 'SYNTAX')
+    return handleSyntaxCheck(client, { type: args.objectType, name, version: args.version, source: args.source });
+
   // BTP: return helpful error for unavailable types
   if (isBtpSystem() && BTP_HINTS[type]) {
     return errorResult(BTP_HINTS[type]);
   }
+
+  if (args.format === 'editable') return readEditableSource(client, args, type, name);
 
   // action="diff": unified diff between two source versions (single system). Bypasses the
   // cache/draft machinery below on purpose — both sides must be RAW source, or the no-draft
@@ -177,6 +184,11 @@ export async function handleSAPRead(
   // See docs/research/2026-06-15-version-diff-saved-read-action.md.
   if (args.action === 'diff') {
     if (!name) return errorResult('SAPRead action="diff" requires a "name".');
+    if (isServerDrivenObjectType(type)) {
+      return errorResult(
+        'SAPRead action="diff" does not support server-driven types; read version="active" and version="inactive" separately.',
+      );
+    }
     const from = typeof args.from === 'string' && args.from ? args.from : 'active';
     const to = typeof args.to === 'string' && args.to ? args.to : 'inactive';
     const fromLabel = typeof args.fromLabel === 'string' && args.fromLabel ? args.fromLabel : undefined;
@@ -223,16 +235,15 @@ export async function handleSAPRead(
     }
   }
 
-  // Server-driven objects (ABAP Platform 2025 / SAP_BASIS 8.16+): DESD, EVTB, DTSC, COTA, …
-  // share one AFF generic-object contract (blue:blueSource metadata + JSON or DDL-text source), read
-  // via the discovery-gated generic engine instead of the per-type switch below. They bypass
-  // the version/draft/cache machinery (no /source/main text; JSON output).
+  // Types in SDO_REGISTRY use the discovery-gated engine for metadata and JSON or DDL-text source.
+  // Preserve the unversioned developer view for omitted/auto; explicit selection is checked by SAP metadata.
   if (isServerDrivenObjectType(type)) {
     if (!name) return errorResult(`"name" is required for SAPRead type=${type}.`);
     if (!(await ensureServerDrivenSupport(client.http, client.safety, type))) {
       return errorResult(serverDrivenUnavailableMessage('SAPRead', type));
     }
-    const sdo = await getServerDrivenObject(client.http, client.safety, type, name);
+    const version = args.version === 'active' || args.version === 'inactive' ? args.version : undefined;
+    const sdo = await getServerDrivenObject(client.http, client.safety, type, name, version);
     return textResult(toolJson(sdo));
   }
 

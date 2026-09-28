@@ -33,7 +33,7 @@ For single-developer setups on your own laptop, use [local-development.md](local
 | Answer | Path |
 |---|---|
 | Docker on any VM / container host | [Docker deployment](#docker-on-any-vm) |
-| BTP Cloud Foundry, one on-prem SAP target | [BTP CF with PP](#btp-cloud-foundry-with-principal-propagation) |
+| BTP Cloud Foundry, one on-prem SAP target | BTP Cloud Foundry deployment — [single-PP](btp-cloud-foundry-deployment.md#single-target-read-only-pp-profile) or [single-Basic](btp-cloud-foundry-deployment.md#single-target-read-only-shared-basic-profile) |
 | BTP Cloud Foundry, many on-prem SAP system/clients | [Multi-System Setup](multi-target-setup.md) |
 | BTP Cloud Foundry, BTP ABAP backend | [BTP CF + BTP ABAP](#btp-cloud-foundry-btp-abap-environment) |
 | BTP Cloud Foundry, S/4HANA Public Cloud backend | [S/4HANA Public Cloud (PP via SAMLAssertion)](s4hana-public-cloud.md) |
@@ -85,7 +85,7 @@ If this shared server should allow development work, add these flags to the same
 Per-user JWT scopes and API-key profiles sit **beneath** that server ceiling — they can only tighten, never widen. A user with the `write` scope still cannot mutate objects when `SAP_ALLOW_WRITES=false`. Full model: [authorization.md](authorization.md#capability-requirements). Every flag: [configuration-reference.md](configuration-reference.md).
 
 ARC-1 audit logs show the real MCP user; SAP audit logs show the shared service account. Trade-off — good compromise when you can't use PP.
-For this shared-user mode, ARC-1 runs a startup auth preflight (`/sap/bc/adt/core/discovery`) and blocks SAP tool calls on 401/403 with a clear remediation message. This avoids hammering SAP with repeated failed logins when the technical password/client is wrong.
+For this shared-user mode, ARC-1 checks authentication and CSRF bootstrap at startup. It tries core discovery first and falls back once to `/sap/bc/adt/discovery` when the core resource is missing or returns no usable token. HTTP 401/403 blocks SAP tool calls with a remediation message, avoiding repeated failed logins. Other bootstrap failures are inconclusive and do not block GET reads; success does not establish authorization or backend support for every tool.
 
 **Full references:**
 - [docker.md](docker.md) — image tags, build, ports, troubleshooting
@@ -100,6 +100,10 @@ For this shared-user mode, ARC-1 runs a startup auth preflight (`/sap/bc/adt/cor
 The recommended deployment path for per-user SAP identity with on-premise SAP. XSUAA identifies the
 MCP user; Destination and Connectivity services plus Cloud Connector propagate that identity;
 SAP certificate mapping and authorization decide the final access.
+
+For one target with an accepted shared SAP identity, use the
+[single-Basic profile](btp-cloud-foundry-deployment.md#single-target-read-only-shared-basic-profile).
+XSUAA remains the MCP authentication layer in that topology too.
 
 If you have not chosen between single-target, multi-target, BTP ABAP, or S/4HANA Public Cloud yet,
 start with the [SAP BTP documentation map](btp-overview.md).
@@ -169,8 +173,11 @@ ARC-1 deployed on CF, backend is a BTP ABAP (Steampunk) system. No Cloud Connect
 
 SAP auth is **OAuth2 via a BTP Destination with `OAuth2UserTokenExchange`**. The ABAP service key is used to create the destination's OAuth client settings, but it is not mounted into ARC-1 and ARC-1 does not run the local browser flow. Per request, XSUAA authenticates the MCP user, the Destination service exchanges that user token for an ABAP-context bearer token, and SAP sees the real ABAP user.
 
+For a manual non-MTA deployment, first create the route-specific XSUAA file described in
+[XSUAA setup](xsuaa-setup.md#step-1-create-xsuaa-service-instance).
+
 ```bash
-cf create-service xsuaa application arc1-xsuaa -c xs-security.json
+cf create-service xsuaa application arc1-xsuaa -c xs-security.landscape.json
 cf create-service destination lite arc1-destination
 # Create destination ABAP_PP with Authentication=OAuth2UserTokenExchange
 cf set-env arc1-mcp-server SAP_SYSTEM_TYPE btp
@@ -205,7 +212,7 @@ For any deployment visible to a network, before you open the gate:
 - [ ] If using cookies: `SAP_PP_ENABLED=true` and cookies both set? → refuses unless `SAP_PP_ALLOW_SHARED_COOKIES=true` escape hatch is explicit
 - [ ] Audit log sink configured (file or BTP Audit Log Service) — payload bodies and result previews are centrally redacted, but logs still contain identities, paths, statuses, sizes, and timing metadata; restrict permissions and rotation
 - [ ] `ARC1_CACHE=memory`/`none` or an encrypted volume on IP-sensitive landscapes — the SQLite cache stores SAP source in cleartext at `.arc1-cache.db`
-- [ ] Image pinned to an exact version (for example `:1.3.0`), not `:latest` <!-- x-release-please-version -->
+- [ ] Image pinned to an exact version (for example `:1.4.0`), not `:latest` <!-- x-release-please-version -->
 - [ ] Update procedure rehearsed → [updating.md](updating.md)
 
 Full production hardening guide: [security-guide.md](security-guide.md).

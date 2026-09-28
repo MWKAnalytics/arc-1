@@ -1,6 +1,6 @@
 # ARC-1 Idea Roadmap
 
-**Last reviewed:** 2026-09-18
+**Last reviewed:** 2026-09-25
 
 This page is ARC-1's idea parking lot. It records worthwhile work that is **not implemented now** so
 it does not disappear, but it is not a delivery schedule and it does not answer "what should we do
@@ -66,10 +66,13 @@ sequence.
 | ID | Idea | Priority | Effort | Status | Category |
 |---|---|---:|---:|---|---|
 | [ARCH-01](#arch-01) | Discovery-driven endpoint routing | P1 | M | Ready | Architecture |
+| [ARCH-02](#arch-02) | Server-driven source-state version verification | P3 | S | Needs research | Architecture |
 | [FEAT-59](#feat-59) | Embeddable multi-tenant server API | P3 | L | Revisit on trigger | Architecture |
 | [SEC-16](#sec-16) | Client ID Metadata Documents (CIMD / SEP-991) | P1 | XL | Parked proposal | Auth / Compatibility |
 | [SEC-15](#sec-15) | Durable DCR signing-key lifecycle | P2 | L | Needs research | Auth / Operations |
 | [COMPAT-06](#compat-06) | Standard outbound proxy support | P2 | M | Ready | Compatibility |
+| [COMPAT-07](#compat-07) | CDS view-entity replacement lineage | P2 | S | Needs research | Compatibility |
+| [COMPAT-08](#compat-08) | Pooled and clustered table policy support | P2 | S | Needs research | Compatibility |
 | [SEC-14](#sec-14) | DNS rebinding and Host-header hardening | P3 | M | Revisit on trigger | Security |
 | [FEAT-03](#feat-03) | BAdI and enhancement authoring | P2 | L | Needs research | ABAP authoring |
 | [FEAT-05](#feat-05) | Safe rename and extract refactorings | P3 | L | Needs research | Developer workflow |
@@ -77,21 +80,24 @@ sequence.
 | [FEAT-23](#feat-23) | Recursive program include reading | P2 | M | Needs research | Developer workflow |
 | [FEAT-30](#feat-30) | ABAP cleaner integration | P3 | L | Revisit on trigger | Developer workflow |
 | [FEAT-66](#feat-66) | Interactive confirmation for destructive actions | P3 | L | Blocked | Safety / UX |
+| [FEAT-75](#feat-75) | Delete mutually-referencing objects as one set | P2 | S | Ready | Developer workflow |
 | [FEAT-22](#feat-22) | Safe gCTS mutation workflows | P3 | L | Needs research | Integration |
 | [FEAT-34](#feat-34) | Translation workflows beyond text symbols | P3 | L | Needs research | Localization |
 | [FEAT-62](#feat-62) | Transaction source and write support | P3 | M | Blocked | Object coverage |
 | [FEAT-70](#feat-70) | Table technical settings | P2 | M | Needs research | Object coverage |
 | [FEAT-72](#feat-72) | CDS index objects | P3 | M | Blocked | Object coverage |
-| [FEAT-73](#feat-73) | Additional server-driven object types | P3 | M | Blocked | Object coverage |
+| [FEAT-73](#feat-73) | Additional server-driven object types | P3 | S | Needs research | Object coverage |
 | [FEAT-09](#feat-09) | Cross Trace result reader | P2 | M | Needs research | Diagnostics |
 | [FEAT-69](#feat-69) | Mass syntax check | P2 | S | Ready | Diagnostics |
 | [FEAT-71](#feat-71) | Dictionary activation log | P3 | M | Needs research | Diagnostics |
+| [FEAT-74](#feat-74) | Dump feed attribute filters | P3 | S | Ready | Diagnostics |
 | [FEAT-50](#feat-50) | ADT type-probe fixture coverage | P3 | XS each | Contributor-driven | Diagnostics |
 | [FEAT-32](#feat-32) | Stable data-preview pagination | P3 | M | Needs research | Data access |
 | [FEAT-36](#feat-36) | Type information | P3 | S | Blocked | Code intelligence |
 | [FEAT-42](#feat-42) | Additional CI output formats | P3 | XS | Revisit on trigger | CI |
 | [OPS-02](#ops-02) | Bounded deep health check | P3 | S | Needs research | Operations |
 | [OPS-05](#ops-05) | SAP Cloud Logging and OpenTelemetry | P2 | L | Revisit on trigger | Operations |
+| [OPS-06](#ops-06) | Per-user SAP session reuse over HTTP | P2 | M | Needs research | Operations |
 | [FEAT-07](#feat-07) | Native TLS listener | P3 | M | Revisit on trigger | Operations |
 | [DOC-02](#doc-02) | Basis administrator handbook | P2 | M | Ready | Documentation |
 
@@ -114,6 +120,21 @@ useful part of the former "remove static release gates" proposal; it should not 
 [the implementation plan](https://github.com/arc-mcp/arc-1/blob/main/docs/plans/2026-05-08-discovery-driven-endpoint-routing.md).
 Preserve known-good fallbacks, cache discovery per target, and prove behavior on at least two SAP
 releases.
+
+<a id="arch-02"></a>
+### ARCH-02 — Server-driven source-state version verification
+
+- **Priority / effort / status:** P3 / S / Needs research
+- **Category:** Architecture
+
+**Remaining gap.** Generic URLs now use SDO_REGISTRY, but `SAPDiagnose object_state` refuses
+server-driven types: live 758/816 source GETs substitute the active body for a missing inactive
+version, so status 200 and matching hashes cannot prove two version identities. Explicit
+`SAPRead version` provides a narrower alternative; it does not make the multi-read snapshot atomic.
+
+**Resume with.** Reuse verified version metadata while preserving object_state's ETags/hashes and
+honest missing-version results. Reproduce active-only, inactive-only and divergent drafts on two
+releases before enabling it. See [routing evidence](https://github.com/arc-mcp/arc-1/blob/main/docs/plans/completed/2026-09-25-server-driven-generic-routing.md).
 
 <a id="feat-59"></a>
 ### FEAT-59 — Embeddable multi-tenant server API
@@ -202,6 +223,31 @@ misleading.
 **Resume with.** Use the existing
 [implementation plan](https://github.com/arc-mcp/arc-1/blob/main/docs/plans/http-forward-proxy-env-support.md);
 test redirects, TLS verification, `NO_PROXY`, OAuth metadata, SAP cookies, and BTP isolation.
+
+<a id="compat-07"></a>
+### COMPAT-07 — CDS view-entity replacement lineage
+
+- **Priority / effort / status:** P2 / S / Needs research
+- **Category:** Compatibility
+
+**Remaining gap.** [#848](https://github.com/arc-mcp/arc-1/pull/848) maps DDIC-based replacement
+SQL views through `DDLDEPENDENCY OBJECTTYPE=VIEW`. SAP also permits CDS view-entity replacements;
+these remain unmapped and fail closed.
+
+**Resume with.** A live table using a CDS view-entity replacement, verified `VIEWREF`/`STOB` identities,
+and graph-alias/blocklist regressions before broadening the catalog join.
+
+<a id="compat-08"></a>
+### COMPAT-08 — Pooled and clustered table policy support
+
+- **Priority / effort / status:** P2 / S / Needs research
+- **Category:** Compatibility
+
+**Remaining gap.** [#848](https://github.com/arc-mcp/arc-1/pull/848) requires an active transparent
+table row. Pooled/clustered ECC tables fail closed even when no replacement is assigned.
+
+**Resume with.** An authorized ECC fixture and catalog/graph evidence for these table classes; prove
+safe no-replacement handling without weakening unsupported-view or ambiguous-metadata refusals.
 
 <a id="sec-14"></a>
 ### SEC-14 — DNS rebinding and Host-header hardening
@@ -319,6 +365,24 @@ Confirmation must also survive retries without creating duplicate mutations.
 confirmation UX. Design intent binding, expiry, idempotency, and non-interactive refusal before
 implementation. Complete confirmation before acquiring an ADT lock.
 
+<a id="feat-75"></a>
+### FEAT-75 — Delete mutually-referencing objects as one set
+
+- **Priority / effort / status:** P2 / S / Ready
+- **Category:** Developer workflow
+
+**Idea.** Let `SAPWrite` delete a bounded object set in one ADT mass-deletion request, so a RAP
+composition parent and its `association to parent` child can be removed without editing source.
+
+**Why it remains.** Deleting either side of such a pair returns 400 (DDIC 039) on 758 and 816, and
+the delete hint suggests a circular order ("delete the other first") for both. The only product path
+today is strip the composition, activate, then delete. `POST /sap/bc/adt/deletion/delete` removed a
+live pair in one call on both releases; the integration suite uses it for cleanup. 7.50 lacks it.
+
+**Resume with.** Reuse the verified request shape in `deleteObjectSet`
+(`tests/integration/crud-harness.ts`). Enforce the package gate for every object before sending,
+report SAP's per-object `isDeleted` result, gate on discovery, and stop suggesting circular orders.
+
 ## Integration and localization
 
 <a id="feat-22"></a>
@@ -403,19 +467,19 @@ media types and activation behavior before adding schemas.
 <a id="feat-73"></a>
 ### FEAT-73 — Additional server-driven object types
 
-- **Priority / effort / status:** P3 / M / Blocked
+- **Priority / effort / status:** P3 / S / Needs research
 - **Category:** Object coverage
 
-**Idea.** Extend the server-driven registry to DRTY, DRAS, and DSFI if their live contracts are
-stable enough for ARC-1.
+**Idea.** Extend the server-driven registry to DRAS and DSFI if their live contracts are stable
+enough for ARC-1.
 
-**Why it remains.** The registry already covers DESD, DTSC, CSNM, EVTB, EVTO, COTA, DSFD, DTDC,
-and UIAD. The remaining candidates lack complete live create/update evidence, and every added type
-also consumes model-facing schema budget.
+**Why it remains.** DRAS and DSFI lack complete live create/update evidence. DRTY now uses the
+existing registry; its [verified contract](https://github.com/arc-mcp/arc-1/blob/main/docs/research/2026-09-18-drty-cds-type-adt-contract.md)
+is a reference for researching the remaining candidates, not a guarantee they share its format.
 
-**Unblock when.** Live probes provide discovery markers, media types, metadata roots, source format,
-create/update/delete behavior, and read-back fixtures for each type. Add candidates independently;
-do not ship them as an all-or-nothing bundle.
+**Resume with.** Discovery markers, metadata/source media types, create subtype, stateful CRUD,
+activation and read-back evidence for each remaining type. Measure schema cost and add candidates
+independently; do not infer their create subtype or source format from the family.
 
 ## Diagnostics, data, and code intelligence
 
@@ -434,14 +498,42 @@ volume limits are not implemented.
 **Resume with.** Capture a bounded real trace result, define redaction and response-size behavior,
 and keep trace activation separate from result reading.
 
+<a id="feat-74"></a>
+### FEAT-74 — Dump feed attribute filters
+
+- **Priority / effort / status:** P3 / S / Ready
+- **Category:** Diagnostics
+
+**Idea.** Let `SAPDiagnose(action="dumps")` filter short dumps by the other attributes SAP's feed
+supports, not only `user` and the time window.
+
+**Why it remains.** `GET /sap/bc/adt/feeds` self-describes the dumps feed, and its
+`feed:attributes` list is much wider than what ARC-1 exposes: `runtimeError`, `exception`,
+`objectName`, `package`, `packageHierarchy`, `component`, `responsible`, `objectResponsible`,
+`packageResponsible`, and a `dateTime`-typed `datetime`. The declared operators are `equals`,
+`notEquals`, `contains`, `notContains`, `greater`, `greaterOrEquals`, `less`, `lessOrEquals`,
+`between`, `notBetween`, with `queryDepth` 2. Live-verified on SAP_BASIS 816 (2026-09-22):
+`and(contains(objectName,SAPM))` returned 11 entries and
+`and(between(datetime,20260901000000,20260910000000))` returned 49, against an unfiltered feed
+capped at 100. Filtering server-side is far cheaper than paging the whole feed and discarding
+entries client-side, and answers questions ARC-1 cannot express today, such as "every TIME_OUT
+dump in package Z\*".
+
+**Resume with.** Read the per-system `feed:attributes` rather than hardcoding the list (it is
+release-dependent and also published for system messages and the gateway error log), map a small
+typed filter input onto the `and(...)` grammar without string-concatenating caller text, and keep
+the existing `user`/`from`/`to` parameters working. Note that the feed's own `rel="next"` link
+appends `sap-client` on every hop, so paging must keep rebuilding the `to` cursor as
+`listDumps` does.
+
 <a id="feat-69"></a>
 ### FEAT-69 — Mass syntax check
 
 - **Priority / effort / status:** P2 / S / Ready
 - **Category:** Diagnostics
 
-**Idea.** Check a bounded list of objects in one `SAPDiagnose` call and return per-object findings
-without stopping at the first failure.
+**Idea.** Extend the read-only `SAPRead(type="SYNTAX")` route to check a bounded list of objects
+and return per-object findings without stopping at the first failure.
 
 **Why it remains.** The current syntax action accepts one object. ATC can cover packages or object
 sets, but it is heavier and semantically different from a direct syntax check.
@@ -563,6 +655,28 @@ adding Cloud Logging must preserve the audit contract.
 **Resume when.** A production operator needs Cloud Logging or requires migration of an existing
 Application Logging deployment. Define the required signals, retention, service binding, and
 exporter support before implementation.
+
+<a id="ops-06"></a>
+### OPS-06 — Per-user SAP session reuse over HTTP
+
+- **Priority / effort / status:** P2 / M / Needs research
+- **Category:** Operations
+
+**Idea.** Reuse a principal-propagation user's SAP session across MCP HTTP requests instead of
+logging on again for every tool call.
+
+**Why it remains.** HTTP mode builds an MCP Server per request. The shared single-target SAP
+transport is reused with ten-minute replacement for new requests, but per-user PP clients and
+multi-target clients are still built per request, so each tool call logs on again and refetches a
+CSRF token. On SAP_BASIS 816 such bursts coincided with fresh stateful contexts failing (`400 Session not found`); see the
+[investigation](https://github.com/arc-mcp/arc-1/blob/main/docs/research/2026-09-27-sap-816-session-failures.md).
+
+**Resume when.** A PP or multi-target deployment reports `400 Session not found` or failed stateful
+closes under load, or SAP logon volume becomes an operator concern. Key any cache by SAP identity and
+token lifetime, keep users isolated, and keep ADR-0007's request-local Basic credentials.
+Specify credential revocation and an absolute reuse lifetime before extending the sharing model;
+the single-target transport's bounded reuse and remaining revocation limitations are documented in
+[security-model R21](https://github.com/arc-mcp/arc-1/blob/main/docs/security-model.md#r21-shared-login-credential-freshness).
 
 <a id="feat-07"></a>
 ### FEAT-07 — Native TLS listener

@@ -134,7 +134,7 @@ vulnerable SQL Console host expression.
 | `SAP_ALLOW_WRITES`                 | `false` unless writes are needed | Blocks every mutation — object writes, activation, transport writes, git writes. |
 | `SAP_ALLOW_FREE_SQL`               | `false` on sensitive systems | Blocks arbitrary SQL queries against the database via `SAPQuery`.                               |
 | `SAP_ALLOW_DATA_PREVIEW`           | `false` unless table preview is required | Blocks named table content preview.                                              |
-| `SAP_BLOCKED_DATA_SOURCES`         | Exact sensitive sources when data access is approved; keep data access disabled if the target lacks the required ADT table-source metadata | Experimental, default-off emergency brake, slower by design (extra SAP metadata calls, no cache). The required resource is normally available on SAP_BASIS 7.52+; older targets return `DATA_POLICY_UNAVAILABLE` before data execution. Fails closed on unsupported lineage but leaves every unlisted source eligible. Not an allowlist, not a DCL replacement, and not a remediation for SAP Note 3772411. |
+| `SAP_BLOCKED_DATA_SOURCES`         | Exact sensitive sources when data access is approved; keep data access disabled if the target lacks the required catalog metadata | Experimental, default-off emergency brake, slower by design (extra SAP metadata calls, no cache). Requires catalog access to `DD02L` and `DDLDEPENDENCY` under the caller identity; blocking either prevents table-lineage proof. Missing data-preview support returns `DATA_POLICY_UNAVAILABLE`. Fails closed on unsupported lineage but leaves every unlisted source eligible. Not an allowlist, not a DCL replacement, and not a remediation for SAP Note 3772411. |
 | `SAP_ALLOWED_PACKAGES`             | `$TMP` or `Z*,Y*,$TMP` | Restricts writes to custom-code packages. Prefix wildcards (`Z*`), exact matches, and DEVCLASS subtree rules (`ZFOO/**` — `ZFOO` plus every transitive sub-package) are all supported; subtree resolution is fail-closed on SAP errors. Reads are never package-gated. |
 | `SAP_ALLOW_TRANSPORT_WRITES`       | `false` unless CTS needed | Opt-in for transport mutations (`SAPTransport.create`/`release`/`delete`).                           |
 | `SAP_ALLOW_GIT_WRITES`             | `false` unless Git needed | Opt-in for gated abapGit mutations and SAP-side Git egress. It does not enable gCTS mutations, which remain quarantined before HTTP; accepted abapGit mutations without an authoritative postcondition return incomplete. |
@@ -225,6 +225,47 @@ used when per-user SAP authorization or horizontal scaling is required. See
 [ADR-0007](https://github.com/arc-mcp/arc-1/blob/main/docs/adr/0007-shared-basic-identity-for-read-only-multi-target.md)
 and [Multi-System Setup](multi-target-setup.md).
 
+### Shared SAP login lifetime and credential rotation
+
+Single-target HTTP deployments reuse the shared identity's SAP login cookies and CSRF token
+across tool calls (#871). Each call still gets fresh object/package caches and its own scope
+restrictions. JWT principal-propagation clients and multi-target clients do not receive this
+shared transport.
+
+**Transport renewal:** once a transport is ten minutes old, a new HTTP request gets a replacement.
+Requests already created retain the old one, so lock/save/unlock and late responses stay together.
+The age is measured with a monotonic clock. Renewal can add authentication/CSRF requests and latency;
+the amount depends on the workload. `ARC1_MAX_CONCURRENT` limits simultaneous SAP requests, not
+logons per minute. Stdio's existing transport lifetime is unchanged.
+
+**A password change is not session revocation.** A replacement discards runtime cookies and
+re-reads `SAP_COOKIE_FILE`, but can reload the same still-valid ticket. `SAP_COOKIE_STRING` and
+startup-resolved destination credentials do not hot-reload. SAP can accept configured session
+cookies or SSO tickets without checking the accompanying Basic password; existing requests may
+also outlive ten minutes. Renewal is therefore not a fixed credential-revocation deadline.
+See SAP's [HTTP security session documentation](https://help.sap.com/saphelp_gbt10/helpdata/en/c9/71e72f422b455993c47b132c408ef5/content.htm).
+
+For planned technical-user credential rotation, update ARC-1's configured credentials or shared
+destination and restart **every instance** so subsequent calls use the new configuration. A still-valid
+session can hide outdated credentials until renewal; repeated rejected logons can then lock the
+technical account under SAP's configured policy. A normal request may retry authentication once,
+whereas a rejected CSRF bootstrap may stop at its first attempt.
+
+For urgent revocation, first stop access through ARC-1 and have the SAP administrator terminate
+the affected HTTP security sessions (SM05) and address outstanding SSO tickets under the system's
+incident procedure. Restarting ARC-1 discards its in-memory cookies; it does not revoke tickets
+copied elsewhere. Replace configured cookie files/strings too if using the development SSO bridge.
+ARC-1's existing 401 recovery is not a revocation mechanism and does not guarantee automatic
+recovery of a write.
+
+SAP recommends `login/create_sso2_ticket=3` to issue assertion tickets without logon tickets, but
+legacy SSO consumers may require `2`. Have the SAP owner assess that landscape-wide setting
+separately; changing issuance does not revoke existing tickets. See
+[SAP's ticket configuration guidance](https://help.sap.com/saphelp_scm700_ehp02/helpdata/en/4e/0a0e6dbce42287e10000000a15822b/content.htm).
+
+SAP sees the shared technical user across calls. Use ARC-1's per-call audit records for MCP-user
+attribution, or use principal propagation when SAP must authorize and audit each human separately.
+
 ### Destination Service
 
 BTP Destination Service centralizes SAP connection details and credentials. ARC-1 resolves the destination at runtime. Use `SAP_BTP_DESTINATION` for shared-user destinations or the BTP ABAP `OAuth2UserTokenExchange` per-user destination. Use `SAP_BTP_PP_DESTINATION` when an on-premise shared startup destination and PrincipalPropagation destination must be separate.
@@ -278,7 +319,7 @@ tool call. See [setup](btp-cloud-foundry-deployment.md#optional-btp-audit-log-si
 | `tool_call_end` | Tool, duration, success/error status, error class, and result size/preview after central redaction. |
 | `http_request` | SAP HTTP method, ADT path, status, and duration. Optional debug bodies/headers are centrally redacted; authentication response bodies are never logged. |
 | `data_response_limited` | A successful or retry response crossed the configured data-preview byte ceiling. Includes tool, limit/observed bytes, endpoint family, queue wait, request ID, and selected target/identity when applicable; never SQL or response bodies. |
-| `http_csrf_fetch` | CSRF-token fetch success and duration. |
+| `http_csrf_fetch` | Debug-level CSRF probe response: method, endpoint, HTTP status, duration, session mode and context-cookie presence. `success` means this response supplied a usable token; a failed probe may recover through a fallback. Presence includes reset markers; it does not establish a valid context. No token/cookie values or bodies. |
 | `auth_scope_denied` | Tool, required scope, and caller's available scopes when authorization rejects a call. |
 | `auth_pp_created` | Success or failure while creating a per-user Principal Propagation ADT client. |
 | `auth_shared_created` | Successful shared technical-user authentication after the Basic canary. Includes tool and `identity: "shared"`. |

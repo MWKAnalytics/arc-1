@@ -17,13 +17,17 @@ its artifact; ask the deployment owner if that revision is unknown. Proposed set
     Follow [BTP Cloud Foundry Deployment](btp-cloud-foundry-deployment.md). Step 4 selects a
     single-PP or multi-PP example from the same checkout; keep following that runbook through acceptance.
 
+    If a shared SAP identity is acceptable for one target, use the
+    [single-Basic profile](btp-cloud-foundry-deployment.md#single-target-read-only-shared-basic-profile)
+    in the same runbook. XSUAA still authenticates the MCP users.
+
     Start with the topology table below only when that recommendation does not fit your landscape.
 
 ## Choose the topology
 
 | Your SAP landscape | ARC-1 shape | SAP identity | Continue with |
 |--------------------|-------------|--------------|---------------|
-| One on-premise SAP system/client | One `/mcp` endpoint | Principal Propagation recommended | [Cloud Foundry Deployment](btp-cloud-foundry-deployment.md) — single-PP profile |
+| One on-premise SAP system/client | One `/mcp` endpoint | Principal Propagation recommended; shared Basic supported | Cloud Foundry Deployment — [single-PP](btp-cloud-foundry-deployment.md#single-target-read-only-pp-profile) or [single-Basic](btp-cloud-foundry-deployment.md#single-target-read-only-shared-basic-profile) |
 | Several on-premise systems or clients, mutation-free access | Pinned `/<SYSTEM>/<CLIENT>/mcp` routes plus `/multi/mcp` | Principal Propagation recommended; shared Basic is an explicit exception | [Cloud Foundry Deployment](btp-cloud-foundry-deployment.md) — multi-PP profile |
 | One general `/mcp` endpoint beside mutation-free multi-target routes | Independent single-target and multi-target configurations in one app | Configure each path independently | Read the [side-by-side risks](multi-target-administration.md#optional-single-target-mcp) before deployment |
 | BTP ABAP Environment | One `/mcp` endpoint | `OAuth2UserTokenExchange` | [BTP ABAP Environment](btp-abap-environment.md) |
@@ -47,8 +51,8 @@ its artifact; ask the deployment owner if that revision is unknown. Proposed set
 
 Follow the [deployment runbook](btp-cloud-foundry-deployment.md) from prerequisites through
 acceptance. It brings in the Destination, Connector, Basis and IAM owners at the required steps;
-single-PP startup destinations must exist before the configured app starts. Do not treat the
-specialist pages as additional deployments to perform afterward.
+the selected single-target destination or destination pair must exist before the configured app
+starts. Do not treat the specialist pages as additional deployments to perform afterward.
 
 For an existing deployment, use the [task map below](#find-the-right-page-quickly) to add a target,
 change access, diagnose a failure or plan an upgrade. Destination changes and role changes have
@@ -105,4 +109,5 @@ results. It does not add setup steps.
 | Why was a destination excluded or quarantined? | [Multi-Target Administration](multi-target-administration.md) |
 | Does this change need restart, restage, or redeploy? | [BTP Administration](btp-administration.md#change-and-restart-matrix) |
 | How do I update or roll back ARC-1? | [Updating](updating.md) and [BTP Administration](btp-administration.md) |
+| How do I upgrade OAuth callbacks and keep existing URLs? | [XSUAA upgrade table](xsuaa-setup.md#upgrading-an-existing-deployment) |
 | What should I inspect in logs? | [Log Analysis](log-analysis.md) |

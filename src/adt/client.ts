@@ -22,7 +22,7 @@ import type { AdtClientConfig } from './config.js';
 import { defaultAdtClientConfig } from './config.js';
 import { type DataResponseBudget, DataResultScope } from './data-result-context.js';
 import { canonicalDataSourceName } from './data-source-name.js';
-import { CDS_DEPENDENCY_GRAPH_PATH, DataSourceBlocklistGuard } from './data-source-policy.js';
+import { CDS_DEPENDENCY_GRAPH_PATH, DataSourceBlocklistGuard, parseTableReplacement } from './data-source-policy.js';
 import { parseTableType, type TableTypeInfo } from './ddic-xml.js';
 import { AdtApiError, AdtSafetyError, isNotFoundError } from './errors.js';
 import { AdtHttpClient, type AdtHttpConfig, type AdtResponse } from './http.js';
@@ -266,11 +266,6 @@ export class AdtClient {
    *  /tables/, structure at /structures/). Populated by getTabl() via the
    *  /tables/→/structures/ 404 fallback. */
   private readonly tablUrlCache = new Map<string, string>();
-  /** Per-client cache of resolved TABL URLs for **writes / activates / deletes**.
-   *  Populated by `resolveTablObjectUrlForWrite()` after asking SAP for the
-   *  actual `adtcore:type` (TABL/DT vs TABL/DS). Separate from `tablUrlCache`
-   *  so the two contracts don't contaminate each other. See issue #285. */
-  private readonly tablWriteUrlCache = new Map<string, string>();
   /** Lazily-instantiated DEVCLASS hierarchy resolver — only built when a subtree
    *  allowedPackages rule is hit. Shared across `withSafety()` clones because the
    *  hierarchy is a property of the SAP system, not of the current safety scope. */
@@ -292,6 +287,7 @@ export class AdtClient {
       password: config.password,
       client: config.client,
       language: config.language,
+      userAgent: config.userAgent,
       insecure: config.insecure,
       gzipDataPreviewBody: config.gzipDataPreviewBody,
       cookies: config.cookies,
@@ -311,7 +307,7 @@ export class AdtClient {
       semaphore: config.adtSemaphore ?? (config.maxConcurrent ? new Semaphore(config.maxConcurrent) : undefined),
     };
 
-    this.http = new AdtHttpClient(httpConfig);
+    this.http = config.http ?? new AdtHttpClient(httpConfig);
   }
 
   /**
@@ -323,7 +319,7 @@ export class AdtClient {
    * the constructor — which must be skipped, since the ctor would build a fresh AdtHttpClient with
    * a new cookie jar and break the shared session. Object.assign then copies whatever own fields
    * `this` has, so a NEW AdtClient field rides along automatically: there is no hand-maintained
-   * re-attach list to forget (that list was issue #333 — a missing `tablWriteUrlCache` left it
+   * re-attach list to forget (that list was issue #333 — a cache field missing from it was
    * `undefined` on the clone and crashed TABL writes on every authenticated path). Each field's
    * sharing rationale lives at its declaration above; a structural test in client.test.ts enforces
    * "every field except safety is shared by reference".
@@ -552,7 +548,7 @@ export class AdtClient {
     for (const r of results) {
       if (r.objectName.toUpperCase() === fmName.toUpperCase() && r.uri.includes('/groups/')) {
         const match = r.uri.match(/\/groups\/([^/]+)\//);
-        if (match) return match[1]!.toUpperCase();
+        if (match) return decodeURIComponent(match[1]!).toUpperCase();
       }
     }
     return null;
@@ -753,7 +749,7 @@ export class AdtClient {
    *  TADIR groups them under R3TR TABL, distinguished only by DD02L-TABCLASS
    *  (TRANSP/CLUSTER/POOL → /tables/, INTTAB/APPEND → /structures/).
    *  Tries /tables/ first, falls back to /structures/ on 404. Caches the resolved
-   *  URL on the client for subsequent write/activate operations. */
+   *  URL for later read-path lookups (where-used, structure hierarchy) — never for mutations. */
   async getTabl(name: string, opts?: SourceReadOptions): Promise<SourceReadResult> {
     checkOperation(this.safety, OperationType.Read, 'GetTabl');
     const upper = name.toUpperCase();
@@ -801,9 +797,8 @@ export class AdtClient {
   }
 
   /** Resolve the canonical ADT URL for a TABL name on the **write/activate/delete**
-   *  path. Unlike `resolveTablObjectUrl()`, this never falls back blindly to
-   *  /structures/ — it asks SAP what the object actually is (via repository search)
-   *  and refuses transparent-table writes on systems where /sap/bc/adt/ddic/tables/
+   *  path. Unlike `resolveTablObjectUrl()`, it first asks SAP what the object actually is
+   *  (via repository search) and refuses transparent-table writes on systems where /sap/bc/adt/ddic/tables/
    *  is absent (NW 7.50 ships /ddic/structures/ only; the table editor was added
    *  in NW 7.52). Returning /structures/ for a TABL/DT object would let a PUT
    *  silently flip DD02L-TABCLASS to INTTAB on the inactive draft (issue #285).
@@ -812,53 +807,34 @@ export class AdtClient {
    *    1. Search returns `TABL/DT` → require /tables/ availability, return /tables/<n>
    *       or throw AdtSafetyError with SE11 hint.
    *    2. Search returns `TABL/DS` → return /structures/<n> (always allowed).
-   *    3. Search returns nothing (or a different type) → fall through to the
-   *       read-path resolver. The caller is creating something new or the object
-   *       was just renamed; subsequent ADT calls will surface the real error.
+   *    3. Search fails or finds no TABL → probe fresh via the read-path resolver. A /tables/ hit
+   *       proves a table on any release; a /structures/ hit proves a structure only where
+   *       discovery shows /tables/ exists. Otherwise (7.50/7.51, or discovery not loaded) refuse:
+   *       a /tables/ 404 cannot tell an absent endpoint from a structure.
    *
-   *  Caches separately from the read resolver so the two contracts don't
-   *  contaminate each other. */
+   *  Never cached: SAP can replace a structure with a table between calls of a long-lived
+   *  client, and a remembered /structures/ route would skip the refusal above. */
   async resolveTablObjectUrlForWrite(
     name: string,
     options: { tablesEndpointAvailable?: boolean } = {},
   ): Promise<string> {
     const upper = name.toUpperCase();
-    const cached = this.tablWriteUrlCache.get(upper);
-    if (cached) {
-      // Defense-in-depth: a cached /tables/ URL must still respect the current
-      // discovery state. The cache stores resolutions, but the availability of
-      // /sap/bc/adt/ddic/tables/ is a per-system property — if it ever resolves
-      // to "missing", the cached entry must not silently bypass the guard.
-      if (cached.startsWith('/sap/bc/adt/ddic/tables/') && options.tablesEndpointAvailable === false) {
-        throw new AdtSafetyError(
-          `Transparent table writes via ADT REST are not available on this system ` +
-            `(/sap/bc/adt/ddic/tables/ is not exposed — NW 7.50/7.51 ship the DDIC ` +
-            `structures endpoint only; the table editor was added in NW 7.52). ` +
-            `Use SE11 in SAPGUI to modify transparent table "${name}", or connect ` +
-            `ARC-1 to an SAP_BASIS ≥ 7.52 system. Writing to /sap/bc/adt/ddic/structures/ ` +
-            `would silently flip DD02L-TABCLASS to INTTAB and corrupt the table.`,
-        );
-      }
-      return cached;
-    }
-
     let actualType: string | undefined;
     try {
       const results = await this.searchObject(name, 5);
       // NPL 7.50 appends a localized suffix to adtcore:name ("T000 (Database Table)",
       // "BAPIRET2 (Structure)"), so strip parenthesized text before matching. A4H
       // and modern releases return just the bare name; both forms must work.
+      // Only TABL hits count: a same-named program must not hide the table's subtype.
       const match = results.find((r) => {
         const bare = String(r.objectName ?? '')
           .replace(/\s*\(.*$/, '')
           .toUpperCase();
-        return bare === upper;
+        return bare === upper && String(r.objectType ?? '').startsWith('TABL');
       });
       actualType = match?.objectType;
     } catch {
-      // Search failure should not block writes — fall through to the read-path
-      // resolver. If the user lacks search authorization the write will still
-      // surface its own error downstream.
+      // Subtype stays unknown; step 3 decides whether the fresh probe alone is trustworthy.
     }
 
     const tableUrl = `/sap/bc/adt/ddic/tables/${encodeURIComponent(name)}`;
@@ -875,18 +851,24 @@ export class AdtClient {
             `would silently flip DD02L-TABCLASS to INTTAB and corrupt the table.`,
         );
       }
-      this.tablWriteUrlCache.set(upper, tableUrl);
       return tableUrl;
     }
-    if (actualType === 'TABL/DS') {
-      this.tablWriteUrlCache.set(upper, structUrl);
-      return structUrl;
-    }
+    if (actualType === 'TABL/DS') return structUrl;
 
-    // Unknown / not-yet-existing object — fall back to the read-path resolver.
-    // For create paths the caller has already checked tablesEndpointAvailable
-    // separately (no existing object to search for).
-    return this.resolveTablObjectUrl(name);
+    // Subtype unknown: re-probe (a cached read route may be stale; a missing object throws its 404).
+    // Create paths never get here: they gate on tablesEndpointAvailable themselves.
+    this.tablUrlCache.delete(upper);
+    const url = await this.resolveTablObjectUrl(name);
+    if (url === tableUrl || options.tablesEndpointAvailable === true) return url;
+    const system =
+      options.tablesEndpointAvailable === false
+        ? 'This system has no /sap/bc/adt/ddic/tables/ (NW 7.50/7.51)'
+        : 'ADT discovery is not loaded, so ARC-1 cannot rule out a system without /sap/bc/adt/ddic/tables/';
+    throw new AdtSafetyError(
+      `Cannot confirm that TABL "${name}" is a structure: the repository search failed or found no TABL. ${system}, ` +
+        'where writing a transparent table through /sap/bc/adt/ddic/structures/ flips DD02L-TABCLASS to INTTAB. ' +
+        'Restore repository-search access for this user, or use SE11 in SAPGUI.',
+    );
   }
 
   /** Get domain metadata (type, length, value table, fixed values) */
@@ -1343,15 +1325,20 @@ export class AdtClient {
   // ─── Table Data Operations ─────────────────────────────────────────
 
   /** A fresh guard per logical request; instrumentation never leaks between decisions. */
-  private dataSourceBlocklistGuard(): DataSourceBlocklistGuard {
+  private dataSourceBlocklistGuard(budget: DataResponseBudget, signal?: AbortSignal): DataSourceBlocklistGuard {
     return new DataSourceBlocklistGuard(this.safety.blockedDataSources, {
       searchObject: (name, maxResults) => this.searchObject(name, maxResults),
-      canonicalTableSourceAvailable: this.http.hasDiscoveryData()
-        ? this.http.discoveryAcceptFor('/sap/bc/adt/ddic/tables') !== undefined
-        : undefined,
-      // Canonical /tables source only: the NW 7.50 /structures fallback omits
-      // replacementObject metadata and therefore cannot prove authorization.
-      readTableSource: async (name) => (await this.getTable(name)).source,
+      // Fixed authorization metadata: public runQuery would recursively invoke this guard.
+      readTableReplacement: async (name) => {
+        const table = canonicalDataSourceName(name);
+        const sql = `SELECT d~TABNAME, d~TABCLASS, d~VIEWREF, d~VIEWREF_ERR, l~DDLNAME
+FROM DD02L AS d LEFT OUTER JOIN DDLDEPENDENCY AS l
+ON l~OBJECTNAME = d~VIEWREF AND l~OBJECTTYPE = 'VIEW' AND l~STATE = 'A'
+WHERE d~TABNAME = '${table}' AND d~AS4LOCAL = 'A'`;
+        // Two rows suffice to reject ambiguity; all bytes share the caller's result budget.
+        const { rows } = parseTableContents(await this.postFreestyleQuery(sql, 2, budget, signal));
+        return parseTableReplacement(table, rows);
+      },
       dependencyGraphAccept: () => this.http.discoveryAcceptFor(CDS_DEPENDENCY_GRAPH_PATH),
       readDependencyGraph: async (path, accept) => {
         checkOperation(this.safety, OperationType.Read, 'GetCdsDependencyGraph');
@@ -1400,20 +1387,20 @@ export class AdtClient {
     // byte-for-byte the name SAP receives. This runs with the blocklist off too: identifier handling
     // must not depend on policy state.
     const source = canonicalDataSourceName(tableName, 'TABLE_CONTENTS table name');
-    await this.dataSourceBlocklistGuard().enforceTableContents(source, sqlFilter);
     const rowLimit = clampPreviewRows(maxRows);
     // Response memory is bounded per logical request (#739); the URL uses the canonical `source`
     // so the name the policy authorized is byte-for-byte the name SAP receives.
-    return this.withDataResultScope(async (budget, signal) =>
-      parseTableContents(
+    return this.withDataResultScope(async (budget, signal) => {
+      await this.dataSourceBlocklistGuard(budget, signal).enforceTableContents(source, sqlFilter);
+      return parseTableContents(
         await this.postDataPreview(
           `/sap/bc/adt/datapreview/ddic?rowNumber=${rowLimit}&ddicEntityName=${encodeURIComponent(source)}`,
           sqlFilter,
           budget,
           signal,
         ),
-      ),
-    );
+      );
+    });
   }
 
   /** Execute freestyle SQL query and return just the rows/columns. */
@@ -1460,11 +1447,9 @@ export class AdtClient {
     checkOperation(this.safety, OperationType.FreeSQL, 'RunQuery');
     if (statements.length === 0) throw new Error('runQueryBatch requires at least one statement');
 
-    // ONE policy decision covering every statement in this logical request.
-    await this.dataSourceBlocklistGuard().enforceSqlBatch(statements);
-
     const rowLimit = clampPreviewRows(maxRows);
     return this.withDataResultScope(async (budget, signal) => {
+      await this.dataSourceBlocklistGuard(budget, signal).enforceSqlBatch(statements);
       const post = (sql: string, limit: number): Promise<string> => this.postFreestyleQuery(sql, limit, budget, signal);
 
       if (statements.length === 1) {
@@ -1507,12 +1492,12 @@ export class AdtClient {
     checkOperation(this.safety, OperationType.Query, 'RunTableQuery');
     // One canonical identity: authorize it, then build the statement from the SAME string.
     const source = canonicalDataSourceName(tableName, 'TABLE_QUERY table name');
-    await this.dataSourceBlocklistGuard().enforceSources([source]);
     const sql = buildTableQuerySql(source, opts.columns, opts.where);
     const maxRows = clampPreviewRows(opts.maxRows);
-    return this.withDataResultScope(async (budget, signal) =>
-      parseTableContents(await this.postFreestyleQuery(sql, maxRows, budget, signal)),
-    );
+    return this.withDataResultScope(async (budget, signal) => {
+      await this.dataSourceBlocklistGuard(budget, signal).enforceSources([source]);
+      return parseTableContents(await this.postFreestyleQuery(sql, maxRows, budget, signal));
+    });
   }
 
   // ─── System Information ────────────────────────────────────────────

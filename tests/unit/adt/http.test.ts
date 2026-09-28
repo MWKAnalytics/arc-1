@@ -885,6 +885,7 @@ describe('AdtHttpClient', () => {
     it('throws AdtApiError when CSRF token is missing from response', async () => {
       mockFetch.mockResolvedValueOnce(mockResponse(200, ''));
       mockFetch.mockResolvedValueOnce(mockResponse(200, ''));
+      mockFetch.mockResolvedValueOnce(mockResponse(200, ''));
 
       const client = new AdtHttpClient(getDefaultConfig());
       await expect(client.fetchCsrfToken()).rejects.toThrow(AdtApiError);
@@ -2002,6 +2003,26 @@ describe('AdtHttpClient', () => {
   // ─── Proxy Configuration ──────────────────────────────────────────
 
   describe('proxy configuration', () => {
+    it('forwards the configured User-Agent on proxy CSRF and mutation requests', async () => {
+      mockClientRequest.mockResolvedValueOnce(mockClientResponse(200, '', { 'x-csrf-token': 'T' }));
+      mockClientRequest.mockResolvedValueOnce(mockClientResponse(200, 'saved'));
+      const client = new AdtHttpClient({
+        ...getDefaultConfig(),
+        userAgent: 'arc-1/proxy-test',
+        btpProxy: {
+          host: 'proxy.example.com',
+          port: 20003,
+          protocol: 'http',
+          getProxyToken: async () => 'proxy-token',
+        },
+      });
+      await client.post('/path', 'source');
+      expect(mockClientRequest).toHaveBeenCalledTimes(2);
+      expect(clientRequestHeaders(0)['User-Agent']).toBe('arc-1/proxy-test');
+      expect(clientRequestHeaders(1)['User-Agent']).toBe('arc-1/proxy-test');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('uses undici Client for proxy requests (standard HTTP proxy, not CONNECT)', async () => {
       mockClientRequest.mockResolvedValueOnce(mockClientResponse(200, 'ok'));
 

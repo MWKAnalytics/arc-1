@@ -1,9 +1,11 @@
 /**
- * Object-type normalization + ADT URL building (pure utilities, no project-internal imports).
+ * Object-type normalization + ADT URL building (static utilities, with server-driven paths from the shared registry).
  *
  * Slash-form alias maps, friendly aliases, canonical-type normalization, the objectBasePath/URL builders,
  * LLM arg-stripping, and class-include helpers.
  */
+
+import { SDO_REGISTRY } from '../adt/server-driven.js';
 
 // ─── Object URL Mapping ──────────────────────────────────────────────
 
@@ -393,11 +395,16 @@ export function functionGroupObjectUrl(group: string): string {
   return `/sap/bc/adt/functions/groups/${encodeURIComponent(normalizedGroup.toLowerCase())}`;
 }
 
+export function functionGroupIncludeObjectUrl(group: string, name: string): string {
+  return `${functionGroupObjectUrl(group)}/includes/${encodeURIComponent(name.toLowerCase())}`;
+}
+
 export function functionModuleObjectUrl(group: string, name: string): string {
   return `${functionGroupObjectUrl(group)}/fmodules/${encodeURIComponent(name.toLowerCase())}`;
 }
 
 export function objectBasePath(type: string): string {
+  if (Object.hasOwn(SDO_REGISTRY, type)) return `${SDO_REGISTRY[type as keyof typeof SDO_REGISTRY].href}/`;
   switch (type) {
     case 'PROG':
       return '/sap/bc/adt/programs/programs/';
@@ -585,9 +592,4 @@ export function detectLocalHandlerInclude(method: string): ClassWriteInclude | u
   if (/^(lhc|lcl)_/.test(lhs)) return 'implementations';
   if (/^ltc_/.test(lhs)) return 'testclasses';
   return undefined;
-}
-
-/** Strip the leading "=== <include> ===\n" header that `client.getClass(name, include)` prepends. */
-export function stripIncludeHeader(source: string): string {
-  return source.replace(/^=== \w+ ===\n/, '');
 }

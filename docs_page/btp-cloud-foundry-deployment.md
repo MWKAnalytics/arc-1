@@ -18,7 +18,7 @@ mutation-free in v1 regardless of the single-target ceiling.
 
 | Topology | Public MCP URL | SAP identity | Capabilities | Start here |
 |---|---|---|---|---|
-| One general SAP target | `/mcp` | Principal Propagation recommended; shared Basic is possible | Full ARC-1 feature set, still constrained by instance flags and roles | This page, then [Destination Reference](btp-destination-setup.md) |
+| One general SAP target | `/mcp` | Principal Propagation recommended; shared Basic is possible | Full ARC-1 feature set, still constrained by instance flags and roles | This page — [single-PP](#single-target-read-only-pp-profile) or [single-Basic](#single-target-read-only-shared-basic-profile) profile |
 | Many SAP system/clients | `/<SYSTEM>/<CLIENT>/mcp` and `/multi/mcp` | PP recommended; optional shared Basic exception | Mutation-free v1: read/search/query/navigate/diagnose/context | This page, then [Multi-System Setup](multi-target-setup.md) |
 | One `/mcp` beside multi-target routes | All of the above | Configured independently | `/mcp` may be writable; multi routes never are | Read [side-by-side risks](multi-target-administration.md#optional-single-target-mcp) first |
 | BTP ABAP Environment | `/mcp` | `OAuth2UserTokenExchange` | Single target | [BTP ABAP Environment](btp-abap-environment.md) |
@@ -30,9 +30,10 @@ diagnostics and a writable `/mcp`. For a customer beta or cutover, a separate CF
 replacing an existing app in place: the shipped XSUAA application and role-collection names are
 space-qualified.
 
-Principal Propagation is the normal customer path because SAP receives the human identity. Shared
-Basic is a default-off compatibility exception: SAP sees a reusable technical user, and a
-multi-target app containing any Basic destination must run exactly one non-rolling CF process.
+Principal Propagation is the normal customer path because SAP receives the human identity.
+Single-target shared Basic is supported when a reusable technical SAP identity is an accepted
+trade-off; it must explicitly disable the base MTA's PP settings. The one-process/non-rolling
+restriction applies only to multi-target mode containing a Basic destination.
 
 ## 2. Assign owners
 
@@ -146,6 +147,25 @@ file; a skipped copy does not mean the selected profile was applied.
 The real `mta-overrides.mtaext` is gitignored. Store the reviewed copy in the customer's protected
 configuration process. Never add secrets to it and never edit generated `mtad.yaml`.
 
+### Single-target read-only shared Basic profile
+
+Use this profile when XSUAA should authenticate MCP callers but every SAP request may use one
+approved technical user:
+
+```bash
+cp -n examples/btp/single-basic/profile.mtaext mta-overrides.mtaext
+```
+
+Prepare a private copy of `examples/btp/single-basic/basic.destination.json` under the ignored
+`.arc1/btp/` directory. Replace the fictional values, supply the credentials through the
+destination owner's protected process, and update `SAP_BTP_DESTINATION` in the extension to the
+same name. The profile explicitly sets both `SAP_PP_ENABLED=false` and `SAP_PP_STRICT=false`
+because the base MTA enables PP.
+
+This initial profile is ADT-only. It disables the gCTS, FLP and UI5 Repository feature probes so
+the Cloud Connector mapping can expose only `/sap/bc/adt` with all sub-paths. Add a non-ADT path
+and re-enable its feature only as one reviewed capability change.
+
 ### Single-target read-only PP profile
 
 For an on-premise `/mcp`, the current runtime uses a Basic destination to resolve the startup target
@@ -171,23 +191,32 @@ Prepare private copies of the two `examples/btp/multi-pp/*.destination.json` fil
 additional target if needed. These are subaccount-level PP destinations; no startup destination is
 needed. Keep `SAP_BTP_DESTINATION` and `SAP_BTP_PP_DESTINATION` absent, including in existing app env.
 
-### Prepare the selected PP profile
+### Prepare the selected profile
 
-Both examples keep strict PP on, all mutation/data/SQL flags off, UI/plugins off and cache none.
-They also deny ATC/Unit workloads for initial acceptance; that is a profile choice, not a general
-multi-target limitation. Do not combine the profiles or add UI overlays.
+All three examples keep mutation/data/SQL flags off, UI/plugins off and cache none. They also deny
+ATC/Unit workloads and disable non-ADT gCTS, FLP and UI5 Repository probes for initial acceptance;
+single-target deployments can enable additional capabilities after acceptance. Multi-target v1
+keeps its [restricted tool surface](multi-target-setup.md#allowed-tools), which excludes `SAPGit`
+and `SAPManage` regardless of feature toggles. The PP profiles keep strict PP on,
+while single-Basic explicitly turns it off. Do not combine the profiles or add UI overlays.
 
 Replace names, virtual URLs, real SID/client and descriptions in your private destination files.
 Keep clients such as `001` quoted. Add `CloudConnectorLocationId` only if the Connector owner
 supplies one. JSON files show the destination fields to create in the cockpit; they do not provision
-anything or guarantee a particular import format. Keep startup credentials in the owner's secure
+anything or guarantee a particular import format. Keep SAP credentials in the owner's secure
 process, not in a PR or LLM prompt.
 
-Ask the Connector/Basis owners to complete [Principal Propagation Setup](principal-propagation-setup.md)
-and create/review the destinations using [Destination Reference](btp-destination-setup.md).
-**For single PP, both destinations must exist before deploying this profile:** startup resolves
-the startup destination and fails if it is missing. Multi PP can start empty, but requires all
-processes to restart after destinations are added. Then continue to step 5 below.
+For single-Basic, ask the Connector owner for a principal-type-None mapping with internal HTTPS and
+only the approved resource paths; then create/review the destination using
+[Destination Reference](btp-destination-setup.md#shared-basic-mcp). For PP, ask the Connector/Basis
+owners to complete [Principal Propagation Setup](principal-propagation-setup.md) and create/review
+the destinations using [Destination Reference](btp-destination-setup.md).
+
+**Both single-target profiles require their configured destination data before deployment.**
+Single-Basic resolves its one destination at startup. Single-PP resolves the Basic startup
+destination at startup and needs the PP request destination for user calls. Multi-PP can start
+empty, but requires all processes to restart after destinations are added. Then continue to step 5
+below.
 
 ### Multi-target with a shared Basic exception
 
@@ -397,13 +426,21 @@ npm run btp:build-deploy-ext
 The deployment creates/updates:
 
 - `arc1-mcp-server`, one 512 MB process by default;
-- XSUAA with ARC-1 scopes, templates, and seven space-qualified role collections;
+- XSUAA with ARC-1 scopes, templates, seven space-qualified role collections, and exact backend
+  `/oauth/callback` and `/oauth/logged-out` URLs;
 - Destination and Connectivity service instances and bindings;
 - the Audit Log premium instance and X.509 binding only when `arc1-auditlog` is activated; and
 - a health check on `/health`.
 
-The unconfigured base application and multi-target mode can start with no SAP targets. The
-single-PP profile is different: its startup destination must already exist, as checked in step 4.
+The default backend route needs no callback setting. For a custom public URL or explicit backend
+`routes:`, follow [Custom public URL](xsuaa-setup.md#custom-public-url) before deployment.
+When updating an existing installation, first check the
+[callback upgrade table](xsuaa-setup.md#upgrading-an-existing-deployment), including preservation
+of an existing optional UI URL.
+
+The unconfigured base application and multi-target mode can start with no SAP targets. The two
+single-target profiles are different: their configured destination data must already exist, as
+checked in step 4.
 
 Verify platform state:
 
@@ -470,7 +507,8 @@ mapping in CERTRULE before testing ARC-1.
 
 Then create the destinations using [BTP Destination Reference](btp-destination-setup.md):
 
-- single target: the explicitly named startup and PP destinations in the extension;
+- single target with shared Basic: the one explicitly named Basic destination in the extension;
+- single target with PP: the explicitly named startup and PP destinations in the extension;
 - multi-target: one subaccount destination per SAP system/client, normally PP, with
   `sap-sysid`, `sap-client`, `Description`, and `arc1.enabled=true`.
 
@@ -520,7 +558,8 @@ Use the Viewer identity. After OAuth:
 These calls establish safe-read access, not the backend login identity: `SYSTEM.user` can come from
 configuration or token claims. Follow [backend identity verification](principal-propagation-setup.md#verify-the-backend-identity)
 with Basis and record that result separately. For shared Basic, verify the intended technical user
-in the backend evidence; Admin `SAPTargets` labels that target `identity: "shared"`.
+in the backend evidence. For discovered multi-target Basic destinations, Admin `SAPTargets` also
+labels the identity as `shared`; single-target `/mcp` has no `SAPTargets` tool.
 
 For the multi-only example, verify that `/mcp` is unavailable and pinned routes do not expose
 `SAPTargets`. The aggregate catalog is configuration inventory, not proof of the user's SAP access.
@@ -559,9 +598,9 @@ The base MTA also sets `OPTIMIZE_MEMORY=true`; do not replace its `exec sh ./bin
 with a fixed `node --max-old-space-size=...` command in the extension. The launcher validates the
 buildpack-provided `MEMORY_AVAILABLE`, derives old-space from the durable CF allocation (384 MiB at
 512 MiB, 768 MiB at 1 GiB), and `exec`s Node so CF's SIGTERM reaches ARC-1. The `sh` prefix also
-matters on its own: an MTAR built on Windows stores every file as `0666` regardless of the mode Git
-records, so a script started directly (`./bin/start-cf.sh`) fails with `Permission denied`,
-exit 126, in a crash loop. Verify the `Runtime memory envelope` and `Data-result safety envelope`
+matters on its own: a reported Windows-built MTAR lost the script executable bit despite its Git mode.
+Starting that script directly (`./bin/start-cf.sh`) caused `Permission denied`,
+exit 126; invoking it through `sh` avoids depending on the archive's executable bit. Verify the `Runtime memory envelope` and `Data-result safety envelope`
 startup logs after every memory or limit change.
 
 ## 11. Handover and ongoing operation
@@ -620,10 +659,10 @@ buildpack push does not create the seven MTA role collections for you.
 | Role collection missing/empty | Perform full MTA deploy, inspect roles, remove/recreate orphaned collection if needed, then reassign |
 | OAuth `invalid_client` after deploy | Restore the intended DCR signing key or re-register clients; do not invent a new key on every deploy |
 | OAuth `invalid_scope` after a grant | On the failure page choose **Role assigned? Refresh access**, then reconnect the MCP client; verify the user's IdP origin if it persists |
-| SAP `401` through PP | Check generated user certificate, STRUST, trusted proxy, ICF logon, CERTRULE, and SU01; the Cloud Connector mapping must not allow the system certificate for user logon |
-| SAP `502` `not mutually authenticated` through PP | STRUST lacks the direct issuing CA of the Cloud Connector system certificate, or the trusted-reverse-proxy DN was truncated by RZ10/SMICM; see [Certificate trust (STRUST)](principal-propagation-setup.md#certificate-trust-strust) |
-| Crash loop `Permission denied`, exit 126 | The launcher was replaced by a direct script call; MTARs built on Windows store files as `0666`, so invoke scripts through `sh` as the base `exec sh ./bin/start-cf.sh` does |
-| Non-interactive `cf deploy` prints nothing and never finishes | A previous `ERROR` operation waits for confirmation; inspect and abort it with [cf mta-ops](updating.md#btp-cloud-foundry), and end both the hanging `cf` process and its `multiapps` child before retrying |
+| SAP `401` through PP | Check generated user certificate, STRUST, trusted proxy, ICF logon, CERTRULE, and SU01; for Basic startup + PP, check the Cloud Connector system-certificate logon setting |
+| SAP `502` `not mutually authenticated` through PP | Check mutual TLS, the system certificate's issuer in the active PSE, and the complete effective trusted-reverse-proxy DN; see [Certificate trust (STRUST)](principal-propagation-setup.md#certificate-trust-strust) |
+| Crash loop `Permission denied`, exit 126 | The launcher was replaced by a direct script call; check the executable bit in the archive and invoke scripts through `sh` as the base `exec sh ./bin/start-cf.sh` does |
+| Non-interactive `cf deploy` prints nothing and never finishes | Check for an earlier operation awaiting a decision with [cf mta-ops](updating.md#btp-cloud-foundry); stop only the identified stalled local process and inspect the server-side operation before retrying |
 | SAP `403` after PP login | Check the actual propagated user's SAP authorizations |
 | Destination change appears ignored | Restart every ARC-1 instance; only discovered multi-target Basic username/password fields are hot |
 | `BTP Audit Log sink disabled` at startup | The selected premium binding is incomplete; recreate/rebind it with the X.509 instance and binding parameters from step 4 |
