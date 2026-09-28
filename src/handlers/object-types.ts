@@ -395,6 +395,10 @@ export function functionGroupObjectUrl(group: string): string {
   return `/sap/bc/adt/functions/groups/${encodeURIComponent(normalizedGroup.toLowerCase())}`;
 }
 
+export function functionGroupIncludeObjectUrl(group: string, name: string): string {
+  return `${functionGroupObjectUrl(group)}/includes/${encodeURIComponent(name.toLowerCase())}`;
+}
+
 export function functionModuleObjectUrl(group: string, name: string): string {
   return `${functionGroupObjectUrl(group)}/fmodules/${encodeURIComponent(name.toLowerCase())}`;
 }

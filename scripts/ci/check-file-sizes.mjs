@@ -69,18 +69,20 @@ const BUDGETS = {
   // belongs on the facade; the two parts that did not were extracted first (lineage evaluation to
   // data-source-policy.ts, the statement-execution loop to table-query.ts).
   // -5 after removing the forwarding-only guard factory and its extra import/configuration lines.
-  'src/adt/client.ts': 1734,
+  // TABL write-route cache removed (never cache subtype routes for mutations); +9 for refusing TABL
+  // mutations whose subtype cannot be verified on 7.50/7.51 (the resolver's error text).
+  'src/adt/client.ts': 1710,
   // The single live ADT integration suite covers every read/write surface against a real system;
   // it passed the 3000-line default test budget with the ATC check-variant binding cases
   // (docs/research/2026-08-19-atc-default-check-variant.md). Split by domain before raising again.
   'tests/integration/adt.integration.test.ts': 3100,
   // Typed attempt accounting, scoped response ownership, and stateful-context teardown must stay at
   // the transport choke point. Relation parsing/traversal and feature algorithms live elsewhere.
-  'src/adt/http.ts': 1553, // #817: smaller shared probe retains the #807 session-owned proxy lifecycle.
+  'src/adt/http.ts': 1549, // Combined #859/#860 transport size; either merge order fits.
   // #817: reject absent CTS documents at the existing list/get parser boundary.
   'src/adt/transport.ts': 1507, // Keep the safe CTS explanation in minimal-error mode.
   // +3 for passing existing exact discovery evidence into the pure opt-in schema projection.
-  'src/server/server.ts': 1485, // #817: preserve the actual bootstrap endpoint in diagnostics.
+  'src/server/server.ts': 1494, // Shared HTTP transport + monotonic renewal for new requests (R21).
 };
 
 const DEFAULT_SRC = 1500;

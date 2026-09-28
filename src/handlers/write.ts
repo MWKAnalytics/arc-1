@@ -14,6 +14,7 @@ import { isServerDrivenObjectType } from '../adt/server-driven.js';
 import type { CachingLayer } from '../cache/caching-layer.js';
 import type { ServerConfig } from '../server/types.js';
 import { type CacheSecurityContext, invalidateInactiveList } from './cache-security.js';
+import { sourcePreconditionError } from './editable-source.js';
 import {
   isDomainsEndpointAvailable,
   isTablesEndpointAvailable,
@@ -21,6 +22,7 @@ import {
 } from './feature-cache.js';
 import {
   canonicalTablType,
+  functionGroupIncludeObjectUrl,
   functionModuleObjectUrl,
   normalizeClassWriteInclude,
   normalizeWriteObjectType,
@@ -96,6 +98,9 @@ export async function handleSAPWrite(
     );
   }
 
+  const preconditionError = sourcePreconditionError(type, action, args.expectedSourceHash);
+  if (preconditionError) return errorResult(preconditionError);
+
   // Types in SDO_REGISTRY use the shared engine (POST metadata → PUT source → activate).
   if (isServerDrivenObjectType(type)) {
     if (type === 'UIAD' && (action === 'create' || action === 'update')) {
@@ -105,8 +110,8 @@ export async function handleSAPWrite(
   }
 
   // For TABL update/delete/edit_method, the existing object may live at /tables/
-  // (transparent) or /structures/ (DDIC structure). Resolve once via the client's
-  // cached URL probe. For 'create' the default /tables/ URL is correct (we only
+  // (transparent) or /structures/ (DDIC structure). Resolve it fresh from SAP on every
+  // mutation (resolveTablObjectUrlForWrite). For 'create' the default /tables/ URL is correct (we only
   // create transparent tables today; structure creation is out of scope).
   //
   // For FUNC, the URL has the parent function group baked into the path:
@@ -178,8 +183,7 @@ export async function handleSAPWrite(
         );
       }
     }
-    const groupLc = encodeURIComponent(group.toLowerCase());
-    objectUrl = `/sap/bc/adt/functions/groups/${groupLc}/includes/${encodeURIComponent(name.toLowerCase())}`;
+    objectUrl = functionGroupIncludeObjectUrl(group, name);
     srcUrl = `${objectUrl}/source/main`;
   } else if (type === 'INCL' && (action === 'create' || action === 'delete') && name.toUpperCase().startsWith('L')) {
     // SAP rejects L* names on /programs/includes ("reserved for function group includes"), but as a

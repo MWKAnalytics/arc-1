@@ -67,7 +67,6 @@ sequence.
 |---|---|---:|---:|---|---|
 | [ARCH-01](#arch-01) | Discovery-driven endpoint routing | P1 | M | Ready | Architecture |
 | [ARCH-02](#arch-02) | Server-driven source-state version verification | P3 | S | Needs research | Architecture |
-| [ARCH-03](#arch-03) | Preserve drafts during RAP scaffold application | P2 | S | Ready | Architecture |
 | [FEAT-59](#feat-59) | Embeddable multi-tenant server API | P3 | L | Revisit on trigger | Architecture |
 | [SEC-16](#sec-16) | Client ID Metadata Documents (CIMD / SEP-991) | P1 | XL | Parked proposal | Auth / Compatibility |
 | [SEC-15](#sec-15) | Durable DCR signing-key lifecycle | P2 | L | Needs research | Auth / Operations |
@@ -80,6 +79,7 @@ sequence.
 | [FEAT-23](#feat-23) | Recursive program include reading | P2 | M | Needs research | Developer workflow |
 | [FEAT-30](#feat-30) | ABAP cleaner integration | P3 | L | Revisit on trigger | Developer workflow |
 | [FEAT-66](#feat-66) | Interactive confirmation for destructive actions | P3 | L | Blocked | Safety / UX |
+| [FEAT-75](#feat-75) | Delete mutually-referencing objects as one set | P2 | S | Ready | Developer workflow |
 | [FEAT-22](#feat-22) | Safe gCTS mutation workflows | P3 | L | Needs research | Integration |
 | [FEAT-34](#feat-34) | Translation workflows beyond text symbols | P3 | L | Needs research | Localization |
 | [FEAT-62](#feat-62) | Transaction source and write support | P3 | M | Blocked | Object coverage |
@@ -96,6 +96,7 @@ sequence.
 | [FEAT-42](#feat-42) | Additional CI output formats | P3 | XS | Revisit on trigger | CI |
 | [OPS-02](#ops-02) | Bounded deep health check | P3 | S | Needs research | Operations |
 | [OPS-05](#ops-05) | SAP Cloud Logging and OpenTelemetry | P2 | L | Revisit on trigger | Operations |
+| [OPS-06](#ops-06) | Per-user SAP session reuse over HTTP | P2 | M | Needs research | Operations |
 | [FEAT-07](#feat-07) | Native TLS listener | P3 | M | Revisit on trigger | Operations |
 | [DOC-02](#doc-02) | Basis administrator handbook | P2 | M | Ready | Documentation |
 
@@ -133,19 +134,6 @@ version, so status 200 and matching hashes cannot prove two version identities. 
 **Resume with.** Reuse verified version metadata while preserving object_state's ETags/hashes and
 honest missing-version results. Reproduce active-only, inactive-only and divergent drafts on two
 releases before enabling it. See [routing evidence](https://github.com/arc-mcp/arc-1/blob/main/docs/plans/completed/2026-09-25-server-driven-generic-routing.md).
-
-<a id="arch-03"></a>
-### ARCH-03 — Preserve drafts during RAP scaffold application
-
-- **Priority / effort / status:** P2 / S / Ready
-- **Category:** Architecture
-
-**Remaining gap.** `SAPWrite scaffold_rap_handlers autoApply=true` reads class includes before
-acquiring its write lock (`src/handlers/write/rap.ts`). A completed competing edit can be overwritten;
-[#845](https://github.com/arc-mcp/arc-1/pull/845) fixes surgical edits, not this separate path.
-
-**Resume with.** Reproduce an intervening include edit, derive the scaffold from fresh reads under the
-class lock, and verify untouched source, refusal paths and multi-include failure handling live.
 
 <a id="feat-59"></a>
 ### FEAT-59 — Embeddable multi-tenant server API
@@ -364,6 +352,24 @@ Confirmation must also survive retries without creating duplicate mutations.
 confirmation UX. Design intent binding, expiry, idempotency, and non-interactive refusal before
 implementation. Complete confirmation before acquiring an ADT lock.
 
+<a id="feat-75"></a>
+### FEAT-75 — Delete mutually-referencing objects as one set
+
+- **Priority / effort / status:** P2 / S / Ready
+- **Category:** Developer workflow
+
+**Idea.** Let `SAPWrite` delete a bounded object set in one ADT mass-deletion request, so a RAP
+composition parent and its `association to parent` child can be removed without editing source.
+
+**Why it remains.** Deleting either side of such a pair returns 400 (DDIC 039) on 758 and 816, and
+the delete hint suggests a circular order ("delete the other first") for both. The only product path
+today is strip the composition, activate, then delete. `POST /sap/bc/adt/deletion/delete` removed a
+live pair in one call on both releases; the integration suite uses it for cleanup. 7.50 lacks it.
+
+**Resume with.** Reuse the verified request shape in `deleteObjectSet`
+(`tests/integration/crud-harness.ts`). Enforce the package gate for every object before sending,
+report SAP's per-object `isDeleted` result, gate on discovery, and stop suggesting circular orders.
+
 ## Integration and localization
 
 <a id="feat-22"></a>
@@ -513,8 +519,8 @@ appends `sap-client` on every hop, so paging must keep rebuilding the `to` curso
 - **Priority / effort / status:** P2 / S / Ready
 - **Category:** Diagnostics
 
-**Idea.** Check a bounded list of objects in one `SAPDiagnose` call and return per-object findings
-without stopping at the first failure.
+**Idea.** Extend the read-only `SAPRead(type="SYNTAX")` route to check a bounded list of objects
+and return per-object findings without stopping at the first failure.
 
 **Why it remains.** The current syntax action accepts one object. ATC can cover packages or object
 sets, but it is heavier and semantically different from a direct syntax check.
@@ -636,6 +642,28 @@ adding Cloud Logging must preserve the audit contract.
 **Resume when.** A production operator needs Cloud Logging or requires migration of an existing
 Application Logging deployment. Define the required signals, retention, service binding, and
 exporter support before implementation.
+
+<a id="ops-06"></a>
+### OPS-06 — Per-user SAP session reuse over HTTP
+
+- **Priority / effort / status:** P2 / M / Needs research
+- **Category:** Operations
+
+**Idea.** Reuse a principal-propagation user's SAP session across MCP HTTP requests instead of
+logging on again for every tool call.
+
+**Why it remains.** HTTP mode builds an MCP Server per request. The shared single-target SAP
+transport is reused with ten-minute replacement for new requests, but per-user PP clients and
+multi-target clients are still built per request, so each tool call logs on again and refetches a
+CSRF token. On SAP_BASIS 816 such bursts coincided with fresh stateful contexts failing (`400 Session not found`); see the
+[investigation](https://github.com/arc-mcp/arc-1/blob/main/docs/research/2026-09-27-sap-816-session-failures.md).
+
+**Resume when.** A PP or multi-target deployment reports `400 Session not found` or failed stateful
+closes under load, or SAP logon volume becomes an operator concern. Key any cache by SAP identity and
+token lifetime, keep users isolated, and keep ADR-0007's request-local Basic credentials.
+Specify credential revocation and an absolute reuse lifetime before extending the sharing model;
+the single-target transport's bounded reuse and remaining revocation limitations are documented in
+[security-model R21](https://github.com/arc-mcp/arc-1/blob/main/docs/security-model.md#r21-shared-login-credential-freshness).
 
 <a id="feat-07"></a>
 ### FEAT-07 — Native TLS listener

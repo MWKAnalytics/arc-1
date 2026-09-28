@@ -51,7 +51,17 @@ The bare minimum needed to reach a SAP system. None of these affect what tool ca
 | `--insecure` | `SAP_INSECURE` | `false` | When `true`, skips TLS certificate verification on the SAP HTTP client. **Dev only** — masks man-in-the-middle attacks and corp-CA misconfiguration in production. |
 | `--gzip-datapreview-body` | `SAP_GZIP_DATAPREVIEW_BODY` | `false` | Compatibility fallback for a reverse proxy/WAF that falsely blocks legitimate SQL-shaped request bodies. When explicitly enabled, gzip-encodes only non-empty POST bodies on the exact ADT collection paths `/sap/bc/adt/datapreview/freestyle` and `/sap/bc/adt/datapreview/ddic`, and sends `Content-Encoding: gzip`. Request decompression is verified on SAP_BASIS 758 and 816; the available 750 test system advertises but does not bind data preview, so validate with one query after enabling on another release. ARC-1 never enables or retries with gzip automatically. This does not enable data preview/free SQL or bypass ARC-1 scopes/SAP authorization, but it can make these bodies opaque to a WAF that scans raw bytes; prefer an approved, narrowly scoped gateway rule exclusion and enable this only with the security owner's approval. In multi-target mode this is one global server policy and therefore applies to every destination. |
 | `--system-type` | `SAP_SYSTEM_TYPE` | `auto` | Forces ARC-1's release/feature gating to behave as if the target is `btp` (Steampunk/Public Cloud) or `onprem`. `auto` (default) lets ARC-1 detect via probes. Override when auto-detection is wrong (e.g. mirrored systems). |
+| `--user-agent` | `SAP_USER_AGENT` | `arc-1/<version>` | Outbound SAP HTTP User-Agent, including CSRF bootstrap and stateful/proxy requests. Optional deployment identifier; printable ASCII, at most 256 characters, surrounding spaces trimmed. Unset/empty uses the default. No caller identity is added. Applies to every destination in multi-target mode. |
 | `--abap-release` | `SAP_ABAP_RELEASE` | — | Manual `SAP_BASIS` release override for local tooling that needs a release number (e.g. abaplint's syntax-feature gating). Examples: `758` for S/4HANA 2023, `816` for ABAP Platform 2025 (SAP renumbered 75x→8xx). ARC-1's runtime probe still wins when available — this is the fallback. |
+
+For SAP ICM request logs, the Basis team can include `%{user-agent}i` in an existing
+[HTTP logging format](https://help.sap.com/saphelp_em92/helpdata/en/48/442541e0804bb8e10000000a42189b/content.htm).
+For example, set `SAP_USER_AGENT=arc-1/team-dev` in local environment configuration,
+or `SAP_USER_AGENT: "arc-1/team-dev"` in CF `.mtaext` properties, and restart/redeploy.
+This identifies ARC-1 traffic; it is sender-supplied, spoofable metadata, never an authorization
+signal. Do not include credentials or personal data. This option applies to ARC-1's SAP HTTP transport,
+not OAuth token requests made by authentication libraries. Proxy header forwarding is unit-tested;
+end-to-end Cloud Connector forwarding and SAP ICM log capture remain unverified.
 
 ### TLS / proxy notes
 
@@ -94,6 +104,10 @@ Pick one primary method. Combining methods that conflict (e.g. basic + cookies +
 |---|---|---|
 | `--user` | `SAP_USER` | Username sent in `Authorization: Basic` on shared-client ADT requests. With `SAP_PP_ENABLED=true`, API-key / non-JWT requests may still use this technical user unless `SAP_PP_STRICT=true` was set explicitly. A failed JWT PP request never falls back to this identity. |
 | `--password` | `SAP_PASSWORD` | Password for the above. Redacted from ARC-1 logs; prefer the environment variable because command-line argv is outside that redaction boundary. |
+
+Single-target HTTP mode reuses SAP login cookies across calls. Changing the SAP password alone
+does not ensure the next call re-authenticates; follow
+[shared-login credential rotation](security-guide.md#shared-sap-login-lifetime-and-credential-rotation).
 
 #### B2. Cookie auth (dev-only SSO bridge)
 
@@ -203,7 +217,7 @@ ARC-1 starts **fully restrictive**. Every capability below is a positive opt-in.
 | `--allow-git-writes` | `SAP_ALLOW_GIT_WRITES` | `false` | With `SAP_ALLOW_WRITES=true`, permits gated abapGit mutations and the egress-capable `external_info` action; caller scope still applies, and package-affecting repository actions enforce the real server-side package allowlist. Some accepted abapGit mutations intentionally return error/incomplete when no authoritative postcondition exists—inspect state before retrying. gCTS reads remain available, but every gCTS mutation is quarantined before HTTP mutation until the staged/preflight/deploy/confirm/rollback contract is implemented. |
 | `--allowed-packages` | `SAP_ALLOWED_PACKAGES` | `$TMP` | Allowlist for **writes only**. Comma-separated. Four pattern kinds: <ul><li>**Exact** — `ZFOO` matches only `ZFOO`.</li><li>**Prefix wildcard** — `Z*` / `Y*` / `/COMPANY/*` match by literal string prefix.</li><li>**DEVCLASS subtree** — `ZFOO/**` matches `ZFOO` *and* every transitive sub-package per `TDEVC.PARENTCL`. The subtree is resolved lazily on first write via ADT's `POST /sap/bc/adt/repository/nodestructure` endpoint (the canonical primitive for "direct children of a package" used by Eclipse ADT and `abap-adt-api`) and cached in-memory for 10 minutes; ARC-1 also invalidates the cache on `SAPManage.create_package` / `delete_package` / `change_package`. Resolution failure (network, 5xx, permissions) is fail-closed — the write is denied with the original error surfaced. Namespaces work: `/COMPANY/THING/**`.</li><li>**`*`** — unrestricted (matches anything).</li></ul>Writes to a package outside this list fail at the safety layer. **Reads are never package-gated.** |
 | `--allowed-transports` | `SAP_ALLOWED_TRANSPORTS` | `[]` | Advanced: CTS ID allowlist. Empty (default) = legacy unrestricted/no per-transport filter; `*` is explicit unrestricted. Exact/prefix entries can constrain single-ID mutations, but deliberately block `release_recursive`: SAP may attach/fold a concurrent child into the live subtree, so only empty or explicit `*` can authorize that action. Use either only when every current/concurrent child is intended to be released. |
-| `--deny-actions` | `SAP_DENY_ACTIONS` | `[]` | Fine-grained per-action denylist. Grammar: `Tool`, `Tool.action`, `Tool.glob*`. Example: `SAPWrite.delete,SAPManage.flp_*`. Accepts a CSV string or a `path/to/file.json` containing an array. Denylisted actions are both hidden from tool listings and blocked at call time. See [authorization.md → Advanced deny actions](authorization.md#advanced-deny-actions). |
+| `--deny-actions` | `SAP_DENY_ACTIONS` | `[]` | Fine-grained per-action denylist. Grammar: `Tool`, `Tool.action`, `Tool.glob*`. Example: `SAPWrite.delete,SAPManage.flp_*`. Accepts a CSV string or a JSON-array file path starting with `/`, `./`, `../`, `~/`, or a Windows drive letter (`C:\arc1\deny.json` / `C:/arc1/deny.json`). Denylisted actions are both hidden from tool listings and blocked at call time. See [authorization.md → Advanced deny actions](authorization.md#advanced-deny-actions). |
 | `--check-before-write` | `SAP_CHECK_BEFORE_WRITE` | `false` | When `true`, ARC-1 runs an ADT server-side `checkruns` syntax check before save. Warnings are appended to the response (non-blocking); errors still fail. Adds one round-trip per write. Activation remains the definitive check — this is an early-feedback option. |
 
 ### Recipes

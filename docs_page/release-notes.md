@@ -22,6 +22,32 @@ important `0.7.0` authorization migration retained below.
      release-please rebuilds that branch from main with `force: true`, so a commit added there is
      lost the next time a feat:/fix: merges. See .claude/commands/release-notes.md. -->
 
+## 1.5.0 — guarded source edits and verified reads (unreleased)
+
+Adds optional source preconditions and read-only syntax checks. No new server settings are required;
+refresh your client's tool list after upgrading. Review User-Agent matching rules in gateways/WAFs
+before deploying; the outbound default changes from `undici` (direct) or absent (Connectivity proxy)
+to `arc-1/<version>`.
+
+| Change | Impact | Action |
+|---|---|---|
+| Safer source edits ([#845](https://github.com/arc-mcp/arc-1/pull/845), [#853](https://github.com/arc-mcp/arc-1/pull/853)) | Class surgery reads drafts under lock. Optional source hashes prevent overwriting changes made since a previous read. Blank source updates are refused; FUNC parameter-only updates preserve the body and stop on unreadable source. | Use `SAPRead(format="editable")` and pass `sourceHash` as `expectedSourceHash`; reconcile refusals. See [source preconditions](tools.md#source-preconditions). |
+| Read-only syntax checks ([#855](https://github.com/arc-mcp/arc-1/pull/855)) | `SAPRead(type="SYNTAX", objectType=...)` checks existing objects or proposed source without saving. Legacy deny rules still apply. | Check `checked`; missing findings alone do not establish successful validation. |
+| Explicit read versions ([#846](https://github.com/arc-mcp/arc-1/pull/846), [#856](https://github.com/arc-mcp/arc-1/pull/856)) | Server-driven reads verify requested versions; hyperfocused `SAP` accepts and forwards source versions to reads. | Omitted/`auto` server-driven reads retain SAP's developer view. An unconfirmed explicit version now fails. |
+| Server-driven deletion and routing ([#847](https://github.com/arc-mcp/arc-1/pull/847), [#849](https://github.com/arc-mcp/arc-1/pull/849)) | Deletion honors advertised prechecks and verifies absence. Generic helpers use registered object URLs; unverified state/diff comparisons refuse. | Inspect incomplete deletion before retrying. Compare explicit versions separately; see [limitations](tools.md#server-driven-object-writes). |
+| Blocklist lineage ([#848](https://github.com/arc-mcp/arc-1/pull/848)) | Replacement checks use active DDIC catalogs without the 7.52+ table-source resource. The 7.50/7.51 path remains unverified live; missing metadata or unsupported lineage fails closed. | Review the [catalog requirements](authorization.md#cost-and-what-this-is-not) when using `SAP_BLOCKED_DATA_SOURCES`. |
+| Function-group transports ([#576](https://github.com/arc-mcp/arc-1/pull/576)) | Checks/history resolve FUNC parents and group-owned includes. | Pass `group` for structural includes; FUNC can resolve it automatically. |
+| Windows policy paths ([#598](https://github.com/arc-mcp/arc-1/pull/598), [#599](https://github.com/arc-mcp/arc-1/pull/599)) | Deny-action files accept absolute drive-letter paths with either separator; test exclusions normalize Windows paths. | `none` |
+| Evaluation conversations ([#854](https://github.com/arc-mcp/arc-1/pull/854)) | The eval harness preserves provider call IDs and groups results from the same assistant turn. | Rerun affected evaluations; production tool behavior is unchanged. |
+| RAP scaffolding ([#857](https://github.com/arc-mcp/arc-1/pull/857)) | Derives class replacements under the lock, preserving edits completed before lock acquisition. | Unchanged mutation calls also need the lock; separate include saves remain non-atomic. See [RAP scaffolding](tools.md#rap-handler-scaffolding). |
+| Request identification ([#859](https://github.com/arc-mcp/arc-1/pull/859)) | SAP requests identify as `arc-1/<version>` by default, including multi-target routes. | Optionally set `SAP_USER_AGENT` / `--user-agent` to identify the deployment; see [configuration](configuration-reference.md#sap-connection). |
+| Session diagnostics ([#860](https://github.com/arc-mcp/arc-1/pull/860)) | CSRF probe outcomes are debug events; E2E captures them and fails on generic lock/unlock routing errors. | Enable debug logging or the file sink when investigating; see the shared-login mitigation below. |
+| Shared HTTP SAP login ([#871](https://github.com/arc-mcp/arc-1/pull/871)) | Reduces repeated logons for the single-target shared identity. New requests replace the transport after ten minutes; existing requests retain their session. PP and multi-target lifetimes are unchanged. | Follow the [credential rotation/revocation procedure](security-guide.md#shared-sap-login-lifetime-and-credential-rotation); transport renewal does not revoke configured SSO tickets. |
+| Verified table/structure writes ([#873](https://github.com/arc-mcp/arc-1/pull/873), [#874](https://github.com/arc-mcp/arc-1/pull/874)) | TABL mutations recheck the current subtype instead of trusting a cached route. When subtype evidence is unavailable and the backend lacks a confirmed table endpoint, writes refuse rather than treating a table as a structure. This can also refuse genuine structure writes on older systems or on any release while ADT discovery is unavailable. | Restore repository-search access or use SE11 in SAPGUI when ARC-1 cannot confirm the subtype. |
+
+Source hashes remain optional; unguarded writes do not protect against edits between tool calls.
+Separate server-driven version reads are not an atomic snapshot.
+
 ## 1.4.0 — CDS types, safer writes, and diagnostics (2026-09-23)
 
 Adds CDS type authoring, extension report execution, and paged ST22 diagnostics.

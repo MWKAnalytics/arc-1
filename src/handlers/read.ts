@@ -28,6 +28,7 @@ import { grepSource } from '../context/grep.js';
 import { extractMethod, formatMethodListing, listMethods } from '../context/method-surgery.js';
 import { logger } from '../server/logger.js';
 import { type CacheSecurityContext, inactiveListUserKey, invalidateInactiveList } from './cache-security.js';
+import { readEditableSource } from './editable-source.js';
 import { getCachedFeatures, isBtpSystem } from './feature-cache.js';
 import {
   detectLocalHandlerInclude,
@@ -36,6 +37,7 @@ import {
   objectUrlForTypeRaw,
 } from './object-types.js';
 import { errorResult, type ToolResult, textResult, toolJson } from './shared.js';
+import { handleSyntaxCheck } from './syntax.js';
 
 const BTP_HINTS: Record<string, string> = {
   PROG: 'Executable programs (reports) are not available on BTP ABAP Environment. Use CLAS with IF_OO_ADT_CLASSRUN for console applications.',
@@ -166,10 +168,15 @@ export async function handleSAPRead(
   const name = String(args.name ?? '');
   const requestedVersion = (args.version ?? 'active') as RequestedSourceVersion;
 
+  if (type === 'SYNTAX')
+    return handleSyntaxCheck(client, { type: args.objectType, name, version: args.version, source: args.source });
+
   // BTP: return helpful error for unavailable types
   if (isBtpSystem() && BTP_HINTS[type]) {
     return errorResult(BTP_HINTS[type]);
   }
+
+  if (args.format === 'editable') return readEditableSource(client, args, type, name);
 
   // action="diff": unified diff between two source versions (single system). Bypasses the
   // cache/draft machinery below on purpose — both sides must be RAW source, or the no-draft
