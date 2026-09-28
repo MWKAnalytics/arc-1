@@ -3,6 +3,7 @@
  * The undici mock + AdtClient + createClient live in ./setup-undici-mock.ts — import that helper
  * and keep all other src-module imports dynamic (see its header for the ordering rules).
  */
+import { readFileSync } from 'node:fs';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdtApiError } from '../../../src/adt/errors.js';
@@ -13,6 +14,7 @@ import { mockResponse } from '../../helpers/mock-fetch.js';
 import { features, featuresOff } from './handler-test-config.js';
 import { AdtClient, createClient, mockFetch } from './setup-undici-mock.js';
 
+const catalog = readFileSync(new URL('../../fixtures/xml/replacement-catalog-scarr.xml', import.meta.url), 'utf8');
 const { handleToolCall, hasRequiredScope, TOOL_SCOPES } = await import('../../../src/handlers/dispatch.js');
 const { resetCachedFeatures, setCachedFeatures } = await import('../../../src/handlers/feature-cache.js');
 const { normalizeObjectType, stripLlmEmptyValues, normalizeTypeArgsForValidation } = await import(
@@ -522,11 +524,14 @@ describe('tool dispatch & cross-cutting handler behavior', () => {
     });
 
     it('explains unavailable policy metadata safely in minimal-error mode', async () => {
-      mockFetch.mockResolvedValue(
-        mockResponse(
-          200,
-          '<?xml version="1.0"?><adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"><adtcore:objectReference adtcore:uri="/sap/bc/adt/ddic/tables/SCARR" adtcore:type="TABL/DT" adtcore:name="SCARR"/></adtcore:objectReferences>',
-        ),
+      mockFetch.mockImplementation(async (url: string) =>
+        String(url).includes('/datapreview/')
+          ? mockResponse(404, 'unavailable')
+          : mockResponse(
+              200,
+              '<?xml version="1.0"?><adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"><adtcore:objectReference adtcore:uri="/sap/bc/adt/ddic/tables/SCARR" adtcore:type="TABL/DT" adtcore:name="SCARR"/></adtcore:objectReferences>',
+              { 'x-csrf-token': 'T' },
+            ),
       );
       const safety = { ...unrestrictedSafetyConfig(), blockedDataSources: ['USR02'] };
       const client = new AdtClient({ baseUrl: 'http://sap:8000', safety });
@@ -549,7 +554,7 @@ describe('tool dispatch & cross-cutting handler behavior', () => {
 
       expect(result.isError).toBe(true);
       expect(text).toContain('DATA_POLICY_UNAVAILABLE');
-      expect(text).toContain('7.52');
+      expect(text).not.toContain('7.52');
       expect(text).toContain('executed=false');
       expect(text).toContain('Retrying unchanged');
       expect(text).not.toMatch(/SCARR|USR02|SAP_BLOCKED_DATA_SOURCES|\/ddic\/tables/i);
@@ -631,7 +636,7 @@ describe('tool dispatch & cross-cutting handler behavior', () => {
       const auditSpy = vi.spyOn(logger, 'emitAudit');
       try {
         mockFetch.mockReset();
-        mockFetch.mockImplementation(async (url: string) => {
+        mockFetch.mockImplementation(async (url: string, opts: RequestInit) => {
           const u = String(url);
           if (u.includes('/repository/informationsystem/search')) {
             return mockResponse(
@@ -641,10 +646,11 @@ describe('tool dispatch & cross-cutting handler behavior', () => {
                 '</adtcore:objectReferences>',
             );
           }
-          if (u.includes('/ddic/tables/')) return mockResponse(200, 'define table scarr { key mandt : abap.clnt; }');
+          if (String(opts.body).includes('FROM DD02L AS d')) return mockResponse(200, catalog);
           return mockResponse(
             200,
             '<?xml version="1.0"?><dataPreview:tableData xmlns:dataPreview="http://www.sap.com/adt/dataPreview"/>',
+            { 'x-csrf-token': 'T' },
           );
         });
         const safety = { ...unrestrictedSafetyConfig(), blockedDataSources: ['USR02'] };
@@ -911,7 +917,8 @@ describe('tool dispatch & cross-cutting handler behavior', () => {
       const result = await handleToolCall(createClient(), DEFAULT_CONFIG, 'SAPRead', { type: 'PROG', name: 'ZA_TEST' });
       expect(result.isError).toBe(true);
       expect(result.content[0]?.text).toContain('already exists');
-      expect(result.content[0]?.text).toContain('action="update"');
+      expect(result.content[0]?.text).toContain('Inspect its identity, package and source');
+      expect(result.content[0]?.text).toContain('Do not blindly repeat create or overwrite');
     });
 
     it('400 activation dependency message returns activation hint', async () => {
@@ -1225,6 +1232,19 @@ describe('tool dispatch & cross-cutting handler behavior', () => {
       expect(result.content[0]?.text).toBeTruthy();
     });
 
+    it('forwards the advertised top-level version to SAPRead', async () => {
+      // 'inactive', not 'active': an omitted version also defaults to ?version=active.
+      const result = await handleToolCall(createClient(), { ...DEFAULT_CONFIG, toolMode: 'hyperfocused' }, 'SAP', {
+        action: 'read',
+        type: 'PROG',
+        name: 'ZHELLO',
+        version: 'inactive',
+      });
+      expect(result.isError).toBeUndefined();
+      const sourceCall = mockFetch.mock.calls.find((call: any[]) => String(call[0]).includes('/source/main'));
+      expect(String(sourceCall?.[0])).toContain('/programs/programs/ZHELLO/source/main?version=inactive');
+    });
+
     it('returns error for unknown SAP action', async () => {
       const result = await handleToolCall(createClient(), DEFAULT_CONFIG, 'SAP', {
         action: 'invalid_action',
@@ -1236,11 +1256,42 @@ describe('tool dispatch & cross-cutting handler behavior', () => {
     it('routes SAP(search) with params', async () => {
       const result = await handleToolCall(createClient(), DEFAULT_CONFIG, 'SAP', {
         action: 'search',
+        version: 'auto',
         params: { query: 'ZCL*' },
       });
       // Should succeed (mock returns data)
       expect(result.isError).toBeUndefined();
     });
+
+    it.each([
+      { version: 'active', serviceVersion: undefined, expected: '0001' },
+      { version: 'auto', serviceVersion: '0002', expected: '0002' },
+    ])(
+      'keeps read version=$version separate from service version=$expected',
+      async ({ version, serviceVersion, expected }) => {
+        mockFetch.mockImplementation(async (url) =>
+          String(url).includes('/publishjobs')
+            ? mockResponse(
+                200,
+                '<asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><SEVERITY>OK</SEVERITY></DATA></asx:values></asx:abap>',
+              )
+            : mockResponse(200, '<serviceBinding published="true" bindingCreated="true"/>', { 'x-csrf-token': 'T' }),
+        );
+        const result = await handleToolCall(createClient(), { ...DEFAULT_CONFIG, toolMode: 'hyperfocused' }, 'SAP', {
+          action: 'activate',
+          type: 'SRVB',
+          name: 'ZUI_TEST_O4',
+          version,
+          params: { action: 'publish_srvb', service_type: 'odatav4', version: serviceVersion },
+        });
+        expect(result.isError, result.content[0]?.text).toBeUndefined();
+        const posts = mockFetch.mock.calls.filter(
+          ([url, options]) => options?.method === 'POST' && String(url).includes('/publishjobs'),
+        );
+        expect(posts).toHaveLength(1);
+        expect(new URL(String(posts[0]![0])).searchParams.get('serviceversion')).toBe(expected);
+      },
+    );
   });
 
   describe('normalizeObjectType', () => {
@@ -1608,6 +1659,7 @@ describe('tool dispatch & cross-cutting handler behavior', () => {
 
     it('adds a BDEF base-extensible hint for behavior extension create failures', async () => {
       mockFetch.mockReset();
+      mockFetch.mockResolvedValueOnce(mockResponse(200, '', { 'x-csrf-token': 'T' }));
       mockFetch.mockResolvedValue(
         mockResponse(
           400,

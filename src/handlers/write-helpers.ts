@@ -57,10 +57,18 @@ import { errorResult, type ToolResult, textResult } from './shared.js';
  */
 export function buildLintConfigOptions(config: ServerConfig, ruleOverrides?: RuleOverrides): LintConfigOptions {
   // Probe-detected system type is most accurate; fall back to CLI config
-  const systemType = getCachedFeatures()?.systemType ?? (config.systemType !== 'auto' ? config.systemType : undefined);
+  const cachedFeatures = getCachedFeatures();
+  const systemType = cachedFeatures?.systemType ?? (config.systemType !== 'auto' ? config.systemType : undefined);
+  const systemTypeSource = cachedFeatures?.systemType
+    ? (cachedFeatures.systemTypeSource ?? 'probe')
+    : config.systemType !== 'auto'
+      ? 'config'
+      : 'default';
   return {
     systemType,
-    abapRelease: getCachedFeatures()?.abapRelease ?? config.abapRelease,
+    systemTypeSource,
+    abapRelease: cachedFeatures?.abapRelease ?? config.abapRelease,
+    abapReleaseSource: cachedFeatures?.abapRelease ? 'probe' : config.abapRelease ? 'config' : 'unknown',
     configFile: config.abaplintConfig,
     ruleOverrides,
   };
@@ -835,8 +843,8 @@ export async function handleServerDrivenObjectWrite(
     invalidateInactiveList(cachingLayer, client, cacheSecurity);
   };
 
-  // SDO source is AFF JSON for most types but DDL text for others (DTSC, DSFD, DTDC) — only parse-validate
-  // the JSON ones. Validating DDL text as JSON would reject every valid source.
+  // Only parse-validate entries whose sourceFormat is 'json'. Validating DDL text as JSON
+  // would reject every valid source.
   const validateSource = (): { ok: true; source: string } | { ok: false; result: ToolResult } => {
     const src = String(args.source ?? '');
     if (serverDrivenSourceFormat(type) === 'json') {
@@ -897,8 +905,15 @@ export async function handleServerDrivenObjectWrite(
     }
     case 'delete': {
       await enforceAllowedPackageForObjectUrl(client, objUrl, `Operations on ${type} '${name}'`, metadataAccept);
-      await deleteServerDrivenObject(client.http, client.safety, type, name, { transport });
-      invalidate();
+      try {
+        await deleteServerDrivenObject(client.http, client.safety, type, name, { transport });
+      } finally {
+        try {
+          invalidate();
+        } catch {
+          // Best-effort cleanup must not mask partial deletion or prevent the audit event.
+        }
+      }
       return textResult(`Deleted ${type} ${name}.`);
     }
     default:
@@ -1048,8 +1063,11 @@ export function runPreWriteLint(
       return {
         blocked: true,
         result: errorResult(
-          `Pre-write lint check failed for ${type} ${name}. Fix these errors before writing:\n${errorLines}\n\n` +
-            'Use SAPLint action="lint_and_fix" to auto-fix, or disable with --lint-before-write=false.',
+          `Pre-write lint check failed for ${type} ${name} (abaplint syntax ${JSON.stringify(result.syntaxVersion)}). ` +
+            `Fix these errors before writing:\n${errorLines}\n\n` +
+            'For parser/version findings, check SAPLint action="list_rules" and the target SAP release before ' +
+            'changing valid source. Use SAPLint action="lint_and_fix" for fixable findings, or ' +
+            'lintBeforeWrite=false to skip this check for this call.',
         ),
       };
     }
@@ -1093,7 +1111,7 @@ const SYNTAX_CHECKABLE_TYPES = new Set([
  *  sequence lands. Real blocking is deferred to SAPActivate, which runs after all
  *  dependencies are in place. Best-effort: network/endpoint failures return ''. */
 export async function runPreWriteSyntaxCheck(
-  client: AdtClient,
+  client: Pick<AdtClient, 'http' | 'safety'>,
   type: string,
   source: string,
   objectUrl: string,

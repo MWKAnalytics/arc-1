@@ -63,7 +63,7 @@ describe('SAPWrite handler — create / batch_create', () => {
     );
   });
 
-  describe('SAPWrite server-driven objects (816)', () => {
+  describe('SAPWrite server-driven objects', () => {
     type FetchCall = [string, { method?: string; body?: string; headers?: Record<string, string> }];
     const callMatching = (method: string, pathname: string): FetchCall | undefined =>
       (mockFetch.mock.calls as FetchCall[]).find(([u, o]) => o?.method === method && new URL(u).pathname === pathname);
@@ -165,14 +165,25 @@ describe('SAPWrite handler — create / batch_create', () => {
       expect(callMatching('POST', '/sap/bc/adt/programs/programs')).toBeUndefined();
     });
 
-    it('delete locks then issues a DELETE on the SDO URL', async () => {
-      const result = await handleToolCall(createClient(), DEFAULT_CONFIG, 'SAPWrite', {
+    it('deletes an SDO on a known target without the optional precheck and confirms absence', async () => {
+      const client = createClient();
+      client.http.setDiscoveryMap(new Map([['/sap/bc/adt/csn/csnm', ['application/vnd.sap.adt.blues.v1+xml']]]));
+      mockFetch.mockImplementation(async (url, options) =>
+        mockResponse(
+          options?.method === 'GET' && String(url).includes('/csn/csnm/ZARC1_CSN') ? 404 : 200,
+          '<asx:abap><LOCK_HANDLE>L1</LOCK_HANDLE></asx:abap>',
+          { 'x-csrf-token': 'T' },
+        ),
+      );
+      const result = await handleToolCall(client, DEFAULT_CONFIG, 'SAPWrite', {
         action: 'delete',
         type: 'CSNM',
         name: 'ZARC1_CSN',
       });
+      expect(result.isError).toBeUndefined();
       expect(result.content[0]?.text).toContain('Deleted CSNM ZARC1_CSN');
       expect(callMatching('DELETE', '/sap/bc/adt/csn/csnm/ZARC1_CSN')).toBeDefined();
+      expect(callMatching('GET', '/sap/bc/adt/csn/csnm/ZARC1_CSN')).toBeDefined();
     });
 
     it('rejects an unsupported action for a server-driven type', async () => {
@@ -199,6 +210,31 @@ describe('SAPWrite handler — create / batch_create', () => {
       expect(result.isError).toBe(true);
       expect(result.content[0]?.text).toContain('8.16+');
       expect(callMatching('POST', '/sap/bc/adt/ddic/desd')).toBeUndefined();
+    });
+
+    it.each(['update', 'delete'])('%s gates on the real package, not the package argument', async (action) => {
+      mockFetch.mockImplementation(async (url: string) =>
+        new URL(url).pathname === '/sap/bc/adt/ddic/desd/ZARC1_SDO'
+          ? mockResponse(
+              200,
+              '<blue:blueSource xmlns:blue="http://www.sap.com/wbobj/blue" xmlns:adtcore="http://www.sap.com/adt/core"><adtcore:packageRef adtcore:name="SAP_PACKAGE"/></blue:blueSource>',
+              { 'x-csrf-token': 'T' },
+            )
+          : mockResponse(200, '', { 'x-csrf-token': 'T' }),
+      );
+      const client = createClient().withSafety({ ...unrestrictedSafetyConfig(), allowedPackages: ['$TMP'] });
+      const result = await handleToolCall(client, DEFAULT_CONFIG, 'SAPWrite', {
+        action,
+        type: 'DESD',
+        name: 'ZARC1_SDO',
+        package: '$TMP',
+        source: '{"formatVersion":"1"}',
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain("package 'SAP_PACKAGE'");
+      expect((mockFetch.mock.calls as FetchCall[]).every(([, options]) => (options?.method ?? 'GET') === 'GET')).toBe(
+        true,
+      );
     });
   });
 
@@ -1168,7 +1204,26 @@ describe('SAPWrite handler — create / batch_create', () => {
       expect(put!.body).toContain('ev_output = iv_input');
     });
 
-    it('FUNC update with structured parameters: splices into source preserving body', async () => {
+    it('FUNC create reports an incomplete signature envelope without misidentifying the FUNCTION keyword', async () => {
+      const calls = captureFetch();
+      const source = 'FUNCTION z_fm.\n  WRITE / 1.\n';
+      const result = await handleToolCall(createClient(), DEFAULT_CONFIG, 'SAPWrite', {
+        action: 'create',
+        type: 'FUNC',
+        name: 'Z_FM',
+        group: 'ZFG',
+        source,
+        parameters: [{ kind: 'importing', name: 'IV_INPUT', type: 'STRING' }],
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0]?.text).toContain('Could not splice structured parameters into the FUNCTION source');
+      expect(calls.find((c) => c.method === 'PUT' && c.url.includes('/source/main'))?.body).toBe(source);
+    });
+
+    it.each([
+      { label: 'full source', source: 'FUNCTION z_fm.\n  cv_flag = cv_flag + 1.\nENDFUNCTION.\n' },
+      { label: 'body only', source: '  cv_flag = cv_flag + 1.\n' },
+    ])('FUNC update with structured parameters preserves $label', async ({ source }) => {
       const calls = captureFetch();
       const result = await handleToolCall(createClient(), DEFAULT_CONFIG, 'SAPWrite', {
         action: 'update',
@@ -1179,7 +1234,7 @@ describe('SAPWrite handler — create / batch_create', () => {
           { kind: 'importing', name: 'IV_INPUT', type: 'STRING', byValue: true },
           { kind: 'changing', name: 'CV_FLAG', type: 'I' },
         ],
-        source: 'FUNCTION z_fm.\n  cv_flag = cv_flag + 1.\nENDFUNCTION.\n',
+        source,
       });
       expect(result.isError).toBeUndefined();
       const put = calls.find((c) => c.method === 'PUT' && c.url.includes('/source/main'));
