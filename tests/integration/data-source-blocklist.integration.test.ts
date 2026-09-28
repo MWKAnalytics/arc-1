@@ -5,7 +5,7 @@
  * - DEMO_CDS_SUMDIST -> SCARR + SPFLI on SAP_BASIS 750 and 758
  * - SCARR data preview is bound on the 758 target; the available 750 endpoint is unbound
  * - BSEG is a cluster table in RFBLG on non-HANA ECC 750 SP23 (principal propagation, 2026-09-26);
- *   pooled/cluster tables no longer exist from ABAP 7.73, so the cluster cases skip there
+ *   cluster cases skip when the target has no active BSEG cluster fixture
  */
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
