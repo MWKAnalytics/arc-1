@@ -28,7 +28,10 @@ function mockWriteHttp(overrides: { putThrows?: boolean; unlockThrows?: boolean 
 } {
   const calls: Array<{ method: string; path: string; body?: string; contentType?: string }> = [];
   const lockBody = '<asx:abap><LOCK_HANDLE>LH123</LOCK_HANDLE><CORRNR></CORRNR></asx:abap>';
+  let deleted = false;
   const http = {
+    discoveryAcceptFor: () => undefined,
+    hasDiscoveryData: () => true,
     post: vi.fn(async (path: string, body?: string, contentType?: string) => {
       calls.push({ method: 'POST', path, body, contentType });
       if (path.includes('_action=LOCK')) return { statusCode: 200, headers: {}, body: lockBody };
@@ -42,10 +45,12 @@ function mockWriteHttp(overrides: { putThrows?: boolean; unlockThrows?: boolean 
     }),
     delete: vi.fn(async (path: string) => {
       calls.push({ method: 'DELETE', path });
+      deleted = true;
       return { statusCode: 200, headers: {}, body: '' };
     }),
     get: vi.fn(async (path: string) => {
       calls.push({ method: 'GET', path });
+      if (deleted) throw new AdtApiError('Not found', 404, path);
       return { statusCode: 200, headers: {}, body: '' };
     }),
     withStatefulSession: vi.fn(async (cb: (s: unknown) => Promise<unknown>) => cb(http)),
@@ -295,7 +300,7 @@ describe('SDO registry write metadata', () => {
   it('the blue family uses blues content types (EVTO v2, rest v1); DTDC uses its own (verified live)', () => {
     expect(SDO_REGISTRY.EVTO.metadataContentType).toContain('blues.v2');
     expect(SDO_REGISTRY.UIAD.metadataContentType).toContain('blues.v2');
-    for (const code of ['DESD', 'DTSC', 'CSNM', 'EVTB', 'COTA', 'DSFD'] as const) {
+    for (const code of ['DESD', 'DTSC', 'CSNM', 'EVTB', 'COTA', 'DSFD', 'DRTY'] as const) {
       expect(SDO_REGISTRY[code].metadataContentType).toContain('blues.v1');
       expect(SDO_REGISTRY[code].discoveryMarker).toBe('blues');
     }
@@ -316,9 +321,16 @@ describe('SDO registry write metadata', () => {
     for (const code of ['DESD', 'CSNM', 'EVTB', 'EVTO', 'COTA'] as const) {
       expect(serverDrivenSourceContentType(code)).toBe('application/json');
     }
-    for (const code of ['DTSC', 'DSFD', 'DTDC'] as const) {
+    for (const code of ['DTSC', 'DSFD', 'DTDC', 'DRTY'] as const) {
       expect(serverDrivenSourceContentType(code)).toBe('text/plain');
     }
+  });
+
+  // Read off the live 816 trial, not inferred from the family: SAP reports DRTY/STY for scalar types
+  // and enums alike, so create needs no subtype routing (unlike TABL /DT vs /DS, #285).
+  it('DRTY is pinned to the collection and subtype read live (816)', () => {
+    expect(SDO_REGISTRY.DRTY.href).toBe('/sap/bc/adt/ddic/drty/sources');
+    expect(SDO_REGISTRY.DRTY.createType).toBe('DRTY/STY');
   });
 });
 
@@ -419,7 +431,7 @@ describe('buildServerDrivenMetadataXml', () => {
     // The create body deliberately omits masterLanguage: a4h-2025 (816) silently ignores it
     // (create with "DE" → object read back as the session language). Master language comes from
     // the sap-language request param (session = config.language), as with other source objects.
-    for (const code of ['DESD', 'DTSC', 'CSNM', 'EVTB', 'EVTO', 'COTA', 'DSFD', 'DTDC', 'UIAD']) {
+    for (const code of ['DESD', 'DTSC', 'CSNM', 'EVTB', 'EVTO', 'COTA', 'DSFD', 'DTDC', 'UIAD', 'DRTY']) {
       expect(buildServerDrivenMetadataXml(code, 'Z', '$TMP', 'd')).not.toContain('masterLanguage');
     }
   });

@@ -1,31 +1,9 @@
 /**
- * ADT HTTP Transport for ARC-1.
- *
- * Handles all HTTP communication with SAP ADT REST API:
- * - CSRF token lifecycle (fetch, cache, refresh on 403)
- * - Cookie-based and Basic auth
- * - Stateful sessions (lock → modify → unlock must share session)
- * - Automatic retry on session expiry
- *
- * Design decisions:
- *
- * 1. CSRF token fetch uses HEAD /sap/bc/adt/core/discovery with "X-CSRF-Token: fetch".
- *    HEAD is ~5s vs ~56s for GET on slow systems (learned from Go version benchmarks).
- *
- * 2. Modifying requests (POST/PUT/DELETE/PATCH) auto-include CSRF token.
- *    On 403, token is refreshed and request is retried once.
- *    (Pattern from both abap-adt-api and fr0ster implementations.)
- *
- * 3. Stateful sessions use "X-sap-adt-sessiontype: stateful" header.
- *    Lock/modify/unlock must use the same session cookies.
- *    withStatefulSession() ensures session isolation and closes the backend
- *    context when the operation finishes.
- *
- * 4. sap-client and sap-language are added to every request as query params.
- *    This is an SAP convention, not ADT-specific.
- *
- * 5. Uses native fetch() with undici dispatchers for proxy and TLS configuration.
- *    No external HTTP dependencies — undici ships with Node.js 22+.
+ * SAP ADT HTTP transport: authentication, cookies, CSRF and bounded retries.
+ * Modifying requests fetch a token when needed and refresh it once on HTTP 403.
+ * Stateful writes share cookies and one proxy connection through lock/save/unlock,
+ * then close their SAP context. Requests carry the configured client and language.
+ * Uses undici dispatchers for direct, proxy and custom-TLS connections.
  */
 
 import type { BTPProxyConfig } from '@arc-mcp/xsuaa-auth/btp';
@@ -49,6 +27,7 @@ import {
 import { prepareDataPreviewWireBody } from './http-wire-body.js';
 import { fetchWithAttemptBudget } from './request-attempt-budget.js';
 import type { Semaphore } from './semaphore.js';
+import { resolveSapUserAgent } from './user-agent.js';
 
 export type { AdtRequestOptions } from './http-deadline.js';
 
@@ -127,6 +106,7 @@ export interface AdtHttpConfig {
   password?: string;
   client?: string;
   language?: string;
+  userAgent?: string;
   insecure?: boolean;
   /** Gzip non-empty data-preview POST bodies for approved WAF compatibility. */
   gzipDataPreviewBody?: boolean;
@@ -191,6 +171,7 @@ interface AuthenticationAttemptState {
 export class AdtHttpClient {
   private discoveryMap: Map<string, string[]> = new Map();
   private negotiatedHeaders: Map<string, { accept?: string; contentType?: string }> = new Map();
+  private readonly userAgent: string;
   private csrfToken = '';
   private dispatcher: Dispatcher | undefined;
   private longOperationDispatcher: Dispatcher | undefined;
@@ -218,6 +199,7 @@ export class AdtHttpClient {
   private readonly authenticationAttemptState: AuthenticationAttemptState;
   constructor(config: AdtHttpConfig, authenticationAttemptState?: AuthenticationAttemptState) {
     this.config = config;
+    this.userAgent = resolveSapUserAgent(config.userAgent);
     this.authenticationAttemptState = authenticationAttemptState ?? { rejected: false, tail: Promise.resolve() };
 
     // Set up undici dispatcher for TLS configuration (non-proxy mode only).
@@ -523,6 +505,7 @@ export class AdtHttpClient {
     const httpStart = Date.now();
 
     // Per-request guards to prevent infinite retry loops
+    const retryTransientErrors = options?.retryTransientErrors !== false;
     let negotiationRetried = false;
     let authRetried = false;
     let retried429 = false;
@@ -539,7 +522,12 @@ export class AdtHttpClient {
       // work process. If that WP has a broken HANA connection, every request fails
       // with "database connection is not open". Fix: clear the session to force
       // ICM to assign a different work process on retry.
-      if (response.status === 500 && this.isDbConnectionError(responseBody) && !this.dbRetryInProgress) {
+      if (
+        retryTransientErrors &&
+        response.status === 500 &&
+        this.isDbConnectionError(responseBody) &&
+        !this.dbRetryInProgress
+      ) {
         this.dbRetryInProgress = true;
         try {
           logger.emitAudit({
@@ -596,11 +584,9 @@ export class AdtHttpClient {
       }
 
       // Handle 503 Service Unavailable — ICM thread/MPI exhaustion or WP overload.
-      // Retry ALL methods: a 503 means ICM rejected the request before it reached a work
-      // process, so the operation never executed — retrying is safe even for POST/PUT/DELETE.
+      // Legacy retries remain the default; ambiguous mutations can disable transient replay.
       // Retry happens INSIDE the semaphore slot to avoid increasing load on an overloaded system.
-      // Honors RFC 7231 Retry-After header when present; falls back to 1-2 s jitter otherwise.
-      if (response.status === 503) {
+      if (response.status === 503 && retryTransientErrors) {
         const { delayMs: jitterMs, source } = parseRetryAfter(
           response.headers.get('retry-after'),
           1000 + Math.random() * 1000,
@@ -637,13 +623,9 @@ export class AdtHttpClient {
       }
 
       // Handle 429 Too Many Requests — emitted by SAP Web Dispatcher, BTP API
-      // Management, or any upstream gateway throttling us. Like 503, the request did
-      // not reach a SAP work process, so retrying ALL methods is safe (gateway-level
-      // rejection, never partial execution). Honors RFC 7231 Retry-After when present;
-      // falls back to 1-2 s jitter. Single retry only — per-request `retried429` guard
-      // prevents loops. If the upstream is still throttling on the second attempt, we
-      // surface the 429 to the caller for them to back off at the agent/LLM layer.
-      if (response.status === 429 && !retried429) {
+      // Management, or any upstream gateway throttling us. Honors Retry-After when present;
+      // otherwise wait 1-2 s. Surface a repeated 429 without a third attempt.
+      if (response.status === 429 && !retried429 && retryTransientErrors) {
         retried429 = true;
         const { delayMs: jitterMs, source } = parseRetryAfter(
           response.headers.get('retry-after'),
@@ -982,11 +964,11 @@ export class AdtHttpClient {
   /** Handle response: throw on error status, return normalized response */
   private handleResponse(status: number, headers: Headers, body: string, path: string): AdtResponse {
     const contentType = headers.get('content-type')?.toLowerCase();
-    const isCoreDiscovery = path.split('?', 1)[0] === '/sap/bc/adt/core/discovery';
+    const isDiscovery = ['/sap/bc/adt/core/discovery', '/sap/bc/adt/discovery'].includes(path.split('?', 1)[0]!);
     if (
       status === 200 &&
       path.startsWith('/sap/bc/adt/') &&
-      (contentType?.startsWith('text/html') || isCoreDiscovery) &&
+      (contentType?.startsWith('text/html') || isDiscovery) &&
       looksLikeLoginPage(body)
     ) {
       if (this.isCookieAuthMode()) {
@@ -1023,11 +1005,12 @@ export class AdtHttpClient {
 
   /**
    * Fetch CSRF token from SAP.
-   * Uses HEAD /sap/bc/adt/core/discovery for speed.
+   * Uses core discovery first, then legacy discovery when the core resource is unavailable.
+   * Returns the endpoint that supplied the token for startup diagnostics.
    */
-  async fetchCsrfToken(options?: AdtRequestOptions): Promise<void> {
+  async fetchCsrfToken(options?: AdtRequestOptions): Promise<string> {
     throwIfRequestCancelled(options);
-    const url = this.buildUrl('/sap/bc/adt/core/discovery');
+    let path = '/sap/bc/adt/core/discovery';
     const headers: Record<string, string> = {
       'X-CSRF-Token': 'fetch',
       Accept: '*/*',
@@ -1063,16 +1046,46 @@ export class AdtHttpClient {
       this.reloadCookiesFromSource();
     }
 
-    // Include existing cookies (config + jar, jar wins) so the session is maintained.
-    const cookieHeader = this.composeCookieHeader();
-    if (cookieHeader) {
-      headers.Cookie = cookieHeader;
-    }
+    // A token only counts as proof when the response itself succeeded: SAP returns one on
+    // failures too, and the old code accepted a token from a 401 — masking the auth error.
+    const usableToken = (response: Response): string | undefined => {
+      const token = response.headers.get('x-csrf-token')?.trim();
+      return response.ok && token && token.toLowerCase() !== 'required' ? token : undefined;
+    };
+    // Every probe keeps the same identity, current cookies and caller's request budget.
+    const probe = async (method: 'HEAD' | 'GET'): Promise<Response> => {
+      const cookieHeader = this.composeCookieHeader();
+      if (cookieHeader) headers.Cookie = cookieHeader;
+      else delete headers.Cookie;
+      const started = Date.now();
+      const response = await this.doFetch(this.buildUrl(path), method, headers, undefined, options);
+      this.storeCookies(response);
+      logger.emitAudit({
+        timestamp: new Date().toISOString(),
+        level: 'debug',
+        event: 'http_csrf_fetch',
+        method,
+        path,
+        statusCode: response.status,
+        durationMs: Date.now() - started,
+        success: !!usableToken(response),
+        adtMode: this.config.sessionType ?? 'unspecified',
+        hasContext: /(?:^|;\s*)sap-contextid=/.test(cookieHeader ?? ''),
+      });
+      if (method === 'GET' && response.status === 200 && !usableToken(response)) {
+        // Preserve the login-page check even when an old handler reports HTTP 200.
+        this.handleResponse(response.status, response.headers, await response.text(), path);
+      }
+      // Only headers are needed; release GET bodies before a fallback or return.
+      if (!response.bodyUsed) await response.body?.cancel();
+      return response;
+    };
 
     try {
-      let response = await this.doFetch(url, 'HEAD', headers, undefined, options);
+      // HEAD avoids downloading discovery when supported; refused HEADs fall back to GET below.
+      let response = await probe('HEAD');
 
-      // Retry once on 503 — ICM may be temporarily overloaded (thread/MPI exhaustion)
+      // Retry once on 503 — ICM may be temporarily overloaded (thread/MPI exhaustion).
       if (response.status === 503) {
         const jitterMs = 1000 + Math.random() * 1000;
         logger.emitAudit({
@@ -1080,79 +1093,52 @@ export class AdtHttpClient {
           level: 'warn',
           event: 'http_request',
           method: 'HEAD',
-          path: '/sap/bc/adt/core/discovery',
+          path,
           statusCode: 503,
           durationMs: 0,
           errorBody: `CSRF fetch got 503 — retrying in ${Math.round(jitterMs)}ms`,
         });
         await sleepWithinRequestBudget(jitterMs, options);
-        response = await this.doFetch(url, 'HEAD', headers, undefined, options);
+        response = await probe('HEAD');
       }
 
-      // Preserve any session established by HEAD before deciding whether GET is needed.
-      // The fallback request must use the same SAP session as the eventual write.
-      this.storeCookies(response);
-
-      const headToken = response.headers.get('x-csrf-token');
-      const headSucceededWithoutToken = response.ok && (!headToken || headToken.toLowerCase() === 'required');
-
-      // Some systems reject HEAD with 403; others accept it but omit the token. In both
-      // cases retry with GET, which is the broadly supported CSRF bootstrap method and
-      // also exposes a real authentication failure instead of a misleading HTTP 200 error.
-      if (response.status === 403 || headSucceededWithoutToken) {
-        const fallbackCookieHeader = this.composeCookieHeader();
-        if (fallbackCookieHeader) {
-          headers.Cookie = fallbackCookieHeader;
-        } else {
-          delete headers.Cookie;
-        }
-        logger.emitAudit({
-          timestamp: new Date().toISOString(),
-          level: response.status === 403 ? 'warn' : 'debug',
-          event: 'http_request',
-          method: 'HEAD',
-          path: '/sap/bc/adt/core/discovery',
-          statusCode: response.status,
-          durationMs: 0,
-          errorBody:
-            response.status === 403
-              ? 'CSRF HEAD returned 403 — retrying with GET (S/4HANA Public Cloud compat)'
-              : 'CSRF HEAD returned no usable token — retrying with GET',
-        });
-        response = await this.doFetch(url, 'GET', headers, undefined, options);
+      // The tested 7.50/7.58/8.16 systems returned HEAD 400 with a token; GET returned 200.
+      // Retry these HEAD refusals or a successful response without a token on the same path.
+      // A successful HEAD with a usable token remains the one-request fast path.
+      if ([400, 403, 405].includes(response.status) || (response.ok && !usableToken(response))) {
+        response = await probe('GET');
       }
 
-      // Store cookies from the final CSRF response — critical for session correlation.
-      this.storeCookies(response);
+      // Older ADT handlers may return an empty 200 for a missing core resource (#817).
+      // A real auth/server failure must not be hidden by trying another endpoint.
+      if (response.status === 404 || response.status === 405 || (response.ok && !usableToken(response))) {
+        path = '/sap/bc/adt/discovery';
+        response = await probe('GET');
+      }
 
-      const token = response.headers.get('x-csrf-token');
-      if (!token || token === 'Required') {
+      const token = usableToken(response);
+      if (!token) {
         if (response.status === 401) {
-          if (this.isCookieAuthMode()) {
-            this.clearCookiesAndMark();
-          }
-          this.notifyUnauthorized('/sap/bc/adt/core/discovery');
+          if (this.isCookieAuthMode()) this.clearCookiesAndMark();
+          this.notifyUnauthorized(path);
           throw new AdtApiError(
             `Authentication failed (401) using sap-client=${this.config.client ?? '100'}. Check SAP_CLIENT, SAP_USER, and SAP_PASSWORD.`,
             401,
-            '/sap/bc/adt/core/discovery',
+            path,
           );
         }
         if (response.status === 403) {
           throw new AdtApiError(
             `Access forbidden (403) using sap-client=${this.config.client ?? '100'}. Check user authorizations.`,
             403,
-            '/sap/bc/adt/core/discovery',
+            path,
           );
         }
-        throw new AdtApiError(
-          `No CSRF token in response (HTTP ${response.status})`,
-          response.status,
-          '/sap/bc/adt/core/discovery',
-        );
+        throw new AdtApiError(`No CSRF token in response (HTTP ${response.status})`, response.status, path);
       }
 
       this.csrfToken = token;
+      return path;
     } catch (err) {
       if (err instanceof AdtApiError || err instanceof AdtNetworkError) throw err;
       const message = err instanceof Error ? err.message : String(err);
@@ -1361,7 +1347,7 @@ export class AdtHttpClient {
     // Empty unless the MCP client sent a valid `traceparent`; ARC-1 never originates a trace.
     // Injected here because doFetch is the single outbound choke point (the proxy branch below
     // spreads these headers too).
-    const outbound = { ...headers, ...traceHeaders(getCurrentContext()) };
+    const outbound = { ...headers, 'User-Agent': this.userAgent, ...traceHeaders(getCurrentContext()) };
 
     let response: Response;
     if (this.config.btpProxy) {

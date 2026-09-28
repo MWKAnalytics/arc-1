@@ -1,6 +1,4 @@
 /**
- * MCP Server for ARC-1.
- *
  * Creates and starts the MCP server with 12 intent-based tools.
  * Supports two transports:
  * - stdio (default): for local MCP clients (Claude Desktop, Claude Code, Cursor)
@@ -33,6 +31,7 @@ import {
 } from '../handlers/feature-cache.js';
 import type { ToolResult } from '../handlers/shared.js';
 import { getToolDefinitions, type ToolDefinition, type ToolDefinitionOptions } from '../handlers/tools.js';
+import { VERSION } from '../version.js';
 import { logAuthSummary } from './auth-summary.js';
 import { API_KEY_PROFILES } from './config.js';
 import { generateRequestId } from './context.js';
@@ -78,8 +77,7 @@ import type { ServerConfig } from './types.js';
 import { startLocalUiServer, type UiServerDeps } from './ui.js';
 import { UiLogBufferSink } from './ui-log-buffer.js';
 
-/** ARC-1 version */
-export const VERSION = '1.3.0'; // x-release-please-version
+export { VERSION } from '../version.js';
 
 // Soft warning for an unusually large served tools/list. It is re-sent on every conversation (a
 // recurring token + latency cost), and some MCP clients cap tool-list size. CI's
@@ -221,6 +219,7 @@ export function buildAdtConfig(
     baseUrl: config.url,
     client: config.client,
     language: config.language,
+    userAgent: config.userAgent,
     insecure: config.insecure,
     gzipDataPreviewBody: config.gzipDataPreviewBody,
     disableSaml: config.disableSaml2,
@@ -424,6 +423,7 @@ export function applyPerUserAuthTokens(
   }
   adtConfig.username = displayUsername;
   adtConfig.password = undefined;
+  adtConfig.http = undefined; // An existing transport can carry another identity's login cookies.
   return adtConfig;
 }
 
@@ -608,14 +608,15 @@ export async function runStartupAuthPreflightWithClient(
   const skipped = skippedStartupAuthPreflight(config);
   if (skipped) return skipped;
   const checkedAt = new Date().toISOString();
-  const endpoint = STARTUP_AUTH_ENDPOINT;
+  let endpoint = STARTUP_AUTH_ENDPOINT;
 
   try {
-    await client.http.get(endpoint);
-    const reason = 'Startup auth preflight succeeded for shared SAP credentials.';
+    endpoint = await client.http.fetchCsrfToken();
+    const reason = 'Startup authentication/CSRF bootstrap succeeded; each tool still checks authorization.';
     logger.info(reason, { endpoint });
     return { status: 'ok', blocking: false, endpoint, checkedAt, reason };
   } catch (err) {
+    if (err instanceof AdtApiError) endpoint = err.path;
     if (err instanceof AdtApiError && (err.statusCode === 401 || err.statusCode === 403)) {
       const reason = buildStartupAuthFailureReason(err.statusCode, config);
       // Non-blocking downgrade only applies to cookieFile mode — that's the path
@@ -639,7 +640,7 @@ export async function runStartupAuthPreflightWithClient(
 
     const detail = err instanceof Error ? err.message : String(err);
     const reason =
-      'Startup auth preflight was inconclusive (non-auth failure). ' +
+      'Startup authentication/CSRF bootstrap was inconclusive (non-auth failure). ' +
       'Continuing and letting runtime requests handle connectivity diagnostics.';
     logger.warn(reason, { endpoint, error: detail });
     return { status: 'inconclusive', blocking: false, endpoint, checkedAt, reason };
@@ -668,7 +669,14 @@ export interface CreateServerOptions {
   dataResultSemaphore?: Semaphore;
   mcpRateLimiter?: McpRateLimiter;
   multiTarget?: MultiTargetServerOptions;
+  /** Shared SAP transport (cookies, CSRF token); each request still gets its own AdtClient and caches. */
+  defaultHttp?: AdtClient['http'];
 }
+
+// Mark startup-401 cookies stale once per transport, preserving cookies refreshed by earlier HTTP calls.
+const staleCookieTransports = new WeakSet<AdtClient['http']>();
+/** Maximum age when selecting a shared transport for a new HTTP request; not a ticket lifetime (R21). */
+export const SHARED_TRANSPORT_MAX_AGE_MS = 10 * 60_000;
 
 export function createServer(config: ServerConfig, options: CreateServerOptions = {}): Server {
   const {
@@ -694,23 +702,14 @@ export function createServer(config: ServerConfig, options: CreateServerOptions 
   );
   const apiKeyProvenanceVerifier = createConfiguredApiKeyVerifier(config);
 
-  // Create default ADT client (shared, uses startup-time credentials or OAuth bearer).
-  // Passes the shared server-wide semaphore so per-user PP clients (created at request
-  // time) share the same Layer 3 concurrency cap.
+  // Default ADT client (startup-time credentials or OAuth bearer); per-user PP clients share its semaphore.
   const defaultClient = multiTarget
     ? undefined
-    : new AdtClient(
-        buildAdtConfig(config, btpProxy, bearerTokenProvider, undefined, adtSemaphore, dataResultSemaphore),
-      );
+    : new AdtClient({
+        ...buildAdtConfig(config, btpProxy, bearerTokenProvider, undefined, adtSemaphore, dataResultSemaphore),
+        http: options.defaultHttp,
+      });
 
-  // Cookie-auth preflight propagation: when startup preflight returned a non-blocking
-  // 401 in SAP_COOKIE_FILE mode, the throwaway preflight client marked itself stale —
-  // but the long-lived defaultClient was constructed independently with cookies read at
-  // startup and is unaware. Without explicit propagation, the first real tool call would
-  // re-emit the same stale cookies and hit 401 again before the lazy reload triggers,
-  // wasting one round-trip per startup-stale-cookie cycle. We propagate the stale state
-  // once on first tool call — idempotent flag keeps later calls O(1).
-  let preflightStalePropagated = false;
   let schemaNullableAutoClientInfoLogged = false;
 
   // Register tool listing — filtered by user's scopes when auth is active
@@ -819,12 +818,10 @@ export function createServer(config: ServerConfig, options: CreateServerOptions 
           isError: true,
         } as Record<string, unknown>;
       }
-      // Non-blocking 401 from cookie-auth preflight → mark the runtime client's cookies
-      // stale so its first call goes straight to the lazy reload path instead of repeating
-      // the failure. Fires once per process; subsequent calls early-return.
-      if (!preflightStalePropagated && startupAuth.status === 'inconclusive' && startupAuth.statusCode === 401) {
-        defaultClient?.http.markCookiesStale();
-        preflightStalePropagated = true;
+      const staleStartupCookies = startupAuth.status === 'inconclusive' && startupAuth.statusCode === 401;
+      if (staleStartupCookies && defaultClient && !staleCookieTransports.has(defaultClient.http)) {
+        defaultClient.http.markCookiesStale();
+        staleCookieTransports.add(defaultClient.http);
       }
     }
 
@@ -1361,6 +1358,18 @@ export async function createAndStartServer(
       })()
     : Promise.resolve();
 
+  // Retire transport state for new HTTP requests, preserving older requests and their late responses.
+  // Configured cookies are reloaded, not revoked; see R21. Stdio builds its server only once.
+  const newDefaultHttp = () =>
+    new AdtClient(buildAdtConfig(config, btpProxy, bearerTokenProvider, undefined, adtSemaphore, dataResultSemaphore))
+      .http;
+  let shared = { http: newDefaultHttp(), since: performance.now() };
+  const defaultHttp = () => {
+    if (performance.now() - shared.since >= SHARED_TRANSPORT_MAX_AGE_MS) {
+      shared = { http: newDefaultHttp(), since: performance.now() };
+    }
+    return shared.http;
+  };
   const buildDefaultServer = () =>
     createServer(config, {
       btpProxy,
@@ -1372,6 +1381,7 @@ export async function createAndStartServer(
       adtSemaphore,
       dataResultSemaphore,
       mcpRateLimiter,
+      defaultHttp: defaultHttp(),
     });
   const aggregateConfig = registry ? buildAggregateToolSurfaceConfig(config, registry.targets) : undefined;
   const buildAggregateServer =
