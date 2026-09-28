@@ -123,34 +123,37 @@ Complete the certificate chain and mapping using
 
 ### Startup user authorizations
 
-The startup destination's technical user runs only the feature probe at process start: ADT
-discovery, system components, the repository information system, CTS request listing, DDL sources,
-HANA system information, abapGit repositories, the AMDP debugger endpoint, and the UI5/BSP file
-store. Authenticated tool calls never use it. Two authorization objects are sufficient, and both are
-actually checked (verified with `STAUTHTRACE` on SAP_BASIS 750: 328 checks within 45 ms of the
-process start, all under the technical user):
+For **single-target PP with `SAP_PP_ENABLED=true` and explicit `SAP_PP_STRICT=true`**,
+the startup destination supplies the technical identity for feature discovery.
+JWT tool calls use the propagated user; they never fall back to this technical user.
+This separation does not describe non-PP deployments or mixed API-key mode. Multi-target
+PP has its own per-target discovery flow and needs no startup Basic destination.
 
-| Object | Field | Value |
+A contributor's `STAUTHTRACE` on SAP_BASIS 750 found the following display-only role
+sufficient for the enabled startup probes. Treat it as a tested starting point,
+not a universal minimum for every release or feature configuration:
+
+| Object | Field | Observed value |
 |---|---|---|
 | `S_ADT_RES` | `URI` | `/sap/bc/adt/*` |
 | `S_DEVELOP` | `ACTVT` | `03` |
 | `S_DEVELOP` | `DEVCLASS`, `OBJTYPE`, `OBJNAME`, `P_GROUP` | `*` |
 
-Ten URIs below `/sap/bc/adt/` were checked; restricting `S_ADT_RES` to exactly those works today
-but breaks when a release adds a probe. The wildcards on `S_DEVELOP` are required because the
-generic ADT authorization check (`CL_ADT_REST_AUTHORIZATION_DEVL`) calls it with empty field
-values, and the BSP file-store probe checks display access on every BSP application in the system.
+The wildcards permit broad repository display. In that trace, the generic ADT check
+used empty object fields and the BSP probe checked application display permissions.
+Have the SAP authorization owner validate any narrower role against the probes your
+release runs. Endpoint availability is not proof that every operation is authorized.
 
-Do **not** add what the probe also touches but does not need: `S_USER_GRP`, `S_TRANSPRT`,
-`S_SYS_RWBO`, `S_ADMI_FCD` (`ST0M`), `S_DYNLGPTS`, and `S_DEVELOP` with `ACTVT` `02` or `16`.
-Those checks fail for the startup user (return codes 4 and 12) while ARC-1 still reports search and
-transport access as available, because the ADT endpoints themselves answer. `S_RFC` and `S_TCODE`
-are not checked at all.
+The trace also contained denied checks for `S_USER_GRP`, `S_TRANSPRT`, `S_SYS_RWBO`,
+`S_ADMI_FCD`, `S_DYNLGPTS` and change/execute activities. Do not grant these merely to
+make a startup trace clean: some checks are optional or occur inside an endpoint
+that still returns usable discovery information.
 
-To verify on your own release, activate `STAUTHTRACE` filtered to the technical user and recording
-all checks (not only failures), start ARC-1 from a stopped state, then deactivate and evaluate.
-`SU53` is not useful here: it shows only the last failed check. Writes never run under this user,
-so this role says nothing about developer authorizations.
+To verify, filter `STAUTHTRACE` to the technical user, record all checks, start ARC-1,
+then stop the trace and compare the denied checks with the feature-probe log.
+Use a propagated developer account to verify the actual tools separately. `SU53`
+shows only the last failed check and cannot replace this trace. Keep write and
+execute permissions out of this startup-only role.
 
 ## Multi-target destination
 
