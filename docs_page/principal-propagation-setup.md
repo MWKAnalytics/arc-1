@@ -417,8 +417,11 @@ Current ARC-1 releases never route a failed JWT principal-propagation request th
 
 ### SAP returns 401 for propagated user
 
-1. **Check STRUST:** Is the Cloud Connector system cert in the certificate list?
-2. **Check ICM:** Is `icm/HTTPS/verify_client = 1`?
+1. **Check STRUST:** Does the active SSL Server PSE trust the system certificate's
+   direct issuer (or the certificate itself if self-signed)? See [Certificate trust](#certificate-trust-strust).
+2. **Check proxy trust:** Does the effective `icm/trusted_reverse_proxy_<n>` contain
+   the complete subject/issuer DN pair of the Cloud Connector system certificate?
+   Verify the active values, including possible truncation, in [ICM parameters](#icm-parameters).
 3. **Check certificate mapping:** Does CERTRULE or VUSREXTID map the certificate subject to a valid SAP user?
 4. **Check user exists:** Does the SAP user exist and is it unlocked?
 5. **Check the Cloud Connector mapping:** for this runbook's combination of Basic
@@ -431,11 +434,13 @@ Current ARC-1 releases never route a failed JWT principal-propagation request th
 ### SAP returns 502 "not mutually authenticated"
 
 Use the Cloud Connector connection check and ICM trace to verify mutual TLS.
-Check that the active PSE trusts the system certificate's issuer and that the
-complete subject/issuer pair is effective in `icm/trusted_reverse_proxy_<n>`.
-The reported case was a missing issuing intermediate CA; truncated DN values
-are another possibility. Follow [Certificate trust](#certificate-trust-strust)
-and [ICM parameters](#icm-parameters) before changing the user's CERTRULE mapping.
+Confirm the effective HTTPS port requests a client certificate (`VCLIENT=1` for
+this Basic + PP setup) and that its active SSL Server PSE trusts the system
+certificate's direct issuer. The reported case lacked that issuing intermediate
+CA. See [Certificate trust](#certificate-trust-strust) and SAP's
+[HTTPS propagation configuration](https://help.sap.com/docs/connectivity/sap-btp-connectivity-cf/configure-principal-propagation-for-https).
+If TLS succeeds but SAP returns 401, follow the proxy-trust and user-mapping checks
+[above](#sap-returns-401-for-propagated-user).
 
 ### Cloud Connector issues
 
@@ -451,7 +456,7 @@ and [ICM parameters](#icm-parameters) before changing the user's CERTRULE mappin
 | `Unable to generate authorization token` | Cloud Connector | Cloud Connector cannot issue the user certificate | Check the subject pattern, the synchronized and trusted identity provider, and the CA certificate |
 | `variable 'mail' not available in context` | Cloud Connector | The subject pattern uses a variable the token does not provide | Use `CN=${email}` |
 | `Will not use certificate for authentication` | Cloud Connector | The mapping still uses the system certificate for logon | Uncheck **System Certificate for Logon** in the mapping |
-| `received via HTTPS without certificate` | ICM trace (`dev_icm`) | ICM did not request or receive the Cloud Connector client certificate | Add `VCLIENT=1` to the HTTPS port and trust the system certificate in the SSL Server Standard PSE |
+| `received via HTTPS without certificate` | ICM trace (`dev_icm`) | ICM did not request or receive the Cloud Connector client certificate | Add `VCLIENT=1` to the HTTPS port and trust its direct issuer in the active SSL Server PSE (the certificate itself if self-signed) |
 | `intermediary is NOT trusted` | ICM trace (`dev_icm`) | `icm/trusted_reverse_proxy_<n>` does not match the system certificate | Copy subject and issuer in SAP's DN form ([ICM parameters](#icm-parameters)) |
 | HTML page `401 Logon failed` | SAP response | Proxy trust or user mapping failed | See [SAP returns 401 for propagated user](#sap-returns-401-for-propagated-user) |
 

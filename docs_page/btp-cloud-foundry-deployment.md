@@ -660,7 +660,7 @@ buildpack push does not create the seven MTA role collections for you.
 | OAuth `invalid_client` after deploy | Restore the intended DCR signing key or re-register clients; do not invent a new key on every deploy |
 | OAuth `invalid_scope` after a grant | On the failure page choose **Role assigned? Refresh access**, then reconnect the MCP client; verify the user's IdP origin if it persists |
 | SAP `401` through PP | Check generated user certificate, STRUST, trusted proxy, ICF logon, CERTRULE, and SU01; for Basic startup + PP, check the Cloud Connector system-certificate logon setting |
-| SAP `502` `not mutually authenticated` through PP | Check mutual TLS, the system certificate's issuer in the active PSE, and the complete effective trusted-reverse-proxy DN; see [Certificate trust (STRUST)](principal-propagation-setup.md#certificate-trust-strust) |
+| SAP `502` `not mutually authenticated` through PP | Check that the effective HTTPS port requests a client certificate (`VCLIENT=1`) and its active SSL Server PSE trusts the system certificate's direct issuer; see [Certificate trust (STRUST)](principal-propagation-setup.md#certificate-trust-strust) |
 | Crash loop `Permission denied`, exit 126 | The launcher was replaced by a direct script call; check the executable bit in the archive and invoke scripts through `sh` as the base `exec sh ./bin/start-cf.sh` does |
 | Non-interactive `cf deploy` prints nothing and never finishes | Check for an earlier operation awaiting a decision with [cf mta-ops](updating.md#btp-cloud-foundry); stop only the identified stalled local process and inspect the server-side operation before retrying |
 | SAP `403` after PP login | Check the actual propagated user's SAP authorizations |
