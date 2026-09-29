@@ -646,7 +646,7 @@ export function parseTableReplacement(
       );
     }
     try {
-      return { container: canonicalDataSourceName(row.SQLTAB!.trim()) };
+      return { container: canonicalDataSourceName(row.SQLTAB!) };
     } catch {
       throw new DataSourceLineageError('replacement catalog did not supply the physical table pool or cluster');
     }

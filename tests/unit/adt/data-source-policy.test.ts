@@ -171,6 +171,7 @@ describe('parseTableReplacement', () => {
 
   it.each([
     [{ ...cluster, SQLTAB: '' }],
+    [{ ...cluster, SQLTAB: '\u00a0RFBLG' }],
     [{ ...cluster, SQLTAB: "RFBLG' OR 1=1" }],
     [{ ...cluster, VIEWREF: 'DEMO_CDS_SUDI' }],
     [{ ...cluster, DDLNAME: 'DEMO_CDS_SUMDIST' }],
