@@ -33,8 +33,9 @@ and restart it; on CF, use an `.mtaext` property for a durable setting.
 At `warn` or `error`, INFO tool-call audit events are hidden on stderr. Keep `info`
 if stderr is your only audit destination, or configure a separate audit sink.
 
-The file sink always receives ALL events regardless of stderr level. E2E runs retain it as
-`mcp-audit.ndjson` beside `mcp-server.log` in the uploaded log directory. CSRF events describe
+File audit output is independent of the stderr level; it records emitted audit events,
+not ordinary log messages. E2E runs retain it as `mcp-audit.ndjson` beside `mcp-server.log`
+in the uploaded log directory. CSRF events describe
 each probe: a HEAD 400 followed by GET 200 with a usable token is a healthy fallback.
 
 ## Event Types
