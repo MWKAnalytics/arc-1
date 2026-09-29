@@ -18,9 +18,9 @@ does not make unsupported SQL valid or replace SAP authorization.
 
 External live evidence in #862/#863 covers non-HANA ECC 7.50 SP23 through BTP PP.
 That customer system is unavailable here; distinguish it from our direct-Basic
-regression checks on 758. Tests detect missing/ambiguous metadata, blocked containers,
+regression checks on 758 and 816 (11 passed / 3 cluster-fixture skips each). Tests detect missing/ambiguous metadata, blocked containers,
 logical sibling independence, and container checks through dependency traversal.
 
-Validation on the reviewed merge: 7,372 unit tests pass; typecheck, lint (two
+Validation: full unit suite passes; typecheck, lint (two
 pre-existing infos), policy, sizes, build and strict MkDocs pass. Restoring main's
 policy makes nine targeted tests fail. No extra production logic was needed.
