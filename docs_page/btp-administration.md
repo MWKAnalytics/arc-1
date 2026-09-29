@@ -169,7 +169,8 @@ Verify a known event end to end; a startup message only confirms binding fields.
    recreate reader bindings/keys at least every 90 days or earlier on expiry.
    A client-secret key is an alternative where credential policy permits it.
 2. Make one successful `SAPRead` call with `type="SYSTEM"` through the intended
-   ARC-1 endpoint. Record the UTC time, authenticated caller and CF space. Run
+   ARC-1 endpoint. Record the UTC time, authenticated caller and CF space GUID
+   (`cf space <space-name> --guid`). Run
    `cf logs arc1-mcp-server --recent` and record the matching tool event's request
    ID. `REQ-n` is process-local and repeats across restarts/instances; it is not
    a globally unique lookup key.
