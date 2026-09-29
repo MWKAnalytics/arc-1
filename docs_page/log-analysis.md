@@ -24,13 +24,14 @@ Logging** for a managed observability stack.
 
 ## Log Levels
 
-Use `SAP_VERBOSE=true` (or `--verbose`) to include debug events on stderr, such as
-HTTP requests and CSRF probes. The default is INFO and above. Set the option on the
-ARC-1 process and restart it; on CF, use an `.mtaext` property for a durable setting.
+Set `ARC1_LOG_LEVEL` (or `--log-level`) to `debug`, `info`, `warn` or `error` to select
+the minimum level printed by the logger on stderr. The default is `info`;
+`SAP_VERBOSE=true` / `--verbose` forces `debug` even when another level is set.
+Debug includes HTTP requests and CSRF probes. Set the option on the ARC-1 process
+and restart it; on CF, use an `.mtaext` property for a durable setting.
 
-`ARC1_LOG_LEVEL` / `--log-level` is currently parsed but not applied to the logger.
-Use `SAP_VERBOSE` for debug output; WARN-only and ERROR-only filtering are not
-currently available through these options.
+At `warn` or `error`, INFO tool-call audit events are hidden on stderr. Keep `info`
+if stderr is your only audit destination, or configure a separate audit sink.
 
 The file sink always receives ALL events regardless of stderr level. E2E runs retain it as
 `mcp-audit.ndjson` beside `mcp-server.log` in the uploaded log directory. CSRF events describe

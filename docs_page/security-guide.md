@@ -297,8 +297,11 @@ For the full operator picture (threat model, sizing math against `rdisp/wp_no_di
 
 ## 9. Audit Logging
 
-ARC-1 emits structured audit events through three sink types. Stderr and file sinks receive every
-event; the BTP Audit Log sink forwards the security/data categories described below.
+ARC-1 emits structured audit events through three sink types. Stderr prints events at or above
+the resolved log level (`ARC1_LOG_LEVEL`, default `info`; `SAP_VERBOSE=true` forces `debug`).
+The configured file sink receives all audit levels, and the BTP Audit Log sink forwards the
+security/data categories described below independently of that level. If stderr is your only
+audit destination, keep `info` to retain tool-call events.
 
 | Sink | Activation | Output |
 |------|-----------|--------|

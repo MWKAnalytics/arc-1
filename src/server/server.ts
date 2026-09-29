@@ -1091,7 +1091,7 @@ export async function createAndStartServer(
   config: ServerConfig,
   sources?: Record<string, import('./types.js').ConfigSource>,
 ): Promise<Server> {
-  initLogger(config.logFormat, config.verbose);
+  initLogger(config.logFormat, config.logLevel);
   const startedAt = new Date().toISOString();
   const uiLogBuffer = config.uiMode !== 'off' ? new UiLogBufferSink() : undefined;
   if (uiLogBuffer) {
