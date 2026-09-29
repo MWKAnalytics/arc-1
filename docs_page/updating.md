@@ -342,7 +342,7 @@ Keep the previous reviewed MTAR, `.mtaext`, and DCR signing secret available. Ro
 same strategy as the update, explicitly permitting the older archive:
 
 ```bash
-cf deploy <previous-reviewed.mtar> -e mta-overrides.mtaext --version-rule ALL
+cf deploy <previous-reviewed.mtar> -e <previous-reviewed.mtaext> --version-rule ALL
 ```
 
 Shared Basic rollback is also stop/deploy/start and must finish at one process. See [BTP Administration](btp-administration.md#deployment-and-scaling-by-identity-mode).
