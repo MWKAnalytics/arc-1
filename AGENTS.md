@@ -300,7 +300,7 @@ Terse routing only — full gotchas per row in [docs/dev-guide.md](docs/dev-guid
 - **Scopes** (`src/authz/policy.ts`): `read`/`write`/`data`/`sql`/`transports`/`git`/`admin` (`admin` ⊇ all, `write` ⊇ `read`, `sql` ⊇ `data`). `ACTION_POLICY` maps `(tool, action/type) → scope` — single source for runtime checks + tool-list pruning. Stdio skips scopes.
 - **Principal propagation**: JWT → per-user SAP session; ARC-1 scopes stay enforced as defense-in-depth.
 - **Multi-target Basic exception**: XSUAA identifies the human, but SAP sees one shared technical user. It is default-off, mutation-free, one-instance, request-local-secret, and process-guarded per ADR-0007.
-- **ADT POSTs that look like reads** (where-used, completion, syntax check, ATC, table preview, …): read-only SAP users need `S_ADT_RES` with `ACTVT=01 AND 02`.
+- **ADT POSTs that look like reads**: `S_ADT_RES` allows URI prefixes and has no `ACTVT`; HTTP POST does not imply create/change permission. Trace backend activity checks separately — [SAP authorization guidance](docs_page/btp-destination-setup.md#startup-user-authorizations).
 
 ## Code Patterns
 

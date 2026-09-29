@@ -100,7 +100,10 @@ INFO: Authorization probe: transport access is not available — <reason>
 ```
 
 …the SAP **user** is missing an authorization (not an ARC-1 bug). Search/read needs `S_DEVELOP` and
-`S_ADT_RES` (read-only users need `S_ADT_RES` with `ACTVT = 01 AND 02` — several ADT reads are POSTs).
+`S_ADT_RES`. The latter checks allowed URI prefixes and has no `ACTVT` field. A read
+implemented as HTTP POST does not imply create/change authorization; trace the
+backend checks on `S_DEVELOP` and other objects separately. See the
+[SAP authorization guidance](btp-destination-setup.md#startup-user-authorizations).
 See [Authorization](authorization.md) and [Principal Propagation](principal-propagation-setup.md).
 
 ### "Feature not available" is normal, not an error
