@@ -160,38 +160,40 @@ secret is a future hardening item, not a property that documentation can provide
 
 ## Audit Log delivery evidence
 
-Verify delivery by retrieving a known ARC-1 event; a startup message only confirms
-that the binding has the required fields. Record the time and request ID of a
-successful, harmless tool call, then find its `MCP Tool Call` record in the Audit
-Log Viewer or the retrieval API.
+Verify a known event end to end; a startup message only confirms binding fields.
 
-Use `auditlog-management`, plan `default`, for subaccount-wide API retrieval. Reuse
-an approved reader where one exists. Follow SAP's
-[retrieval setup](https://help.sap.com/docs/btp/sap-business-technology-platform/audit-log-retrieval-api-usage-for-subaccounts-in-cloud-foundry-environment),
-prefer its X.509/mTLS credential flow, and store keys outside tickets and source control.
-A client-secret key is an alternative when your credential policy allows it. SAP
-recommends recreating reader bindings/keys at least every 90 days; rotate earlier
-when the credential expires.
+1. Prepare an approved Audit Log Viewer or `auditlog-management` reader (plan
+   `default`) for subaccount-wide API retrieval. Follow SAP's
+   [retrieval setup](https://help.sap.com/docs/btp/sap-business-technology-platform/audit-log-retrieval-api-usage-for-subaccounts-in-cloud-foundry-environment).
+   Prefer X.509/mTLS credentials, keep keys outside tickets/source control, and
+   recreate reader bindings/keys at least every 90 days or earlier on expiry.
+   A client-secret key is an alternative where credential policy permits it.
+2. Make one successful `SAPRead` call with `type="SYSTEM"` through the intended
+   ARC-1 endpoint. Record the UTC time, authenticated caller and CF space. Run
+   `cf logs arc1-mcp-server --recent` and record the matching tool event's request
+   ID. `REQ-n` is process-local and repeats across restarts/instances; it is not
+   a globally unique lookup key.
+3. In the Viewer, or with a valid OAuth token in the retrieval API, search a narrow
+   UTC window around that call. `SAPRead` uses `audit.data-access`, matching this
+   example (other tools can use different categories):
 
-With a valid OAuth token, query a UTC window around the call:
+   ```text
+   GET <url>/auditlog/v2/auditlogrecords?time_from=2026-09-17T07:00:00&time_to=2026-09-17T07:05:00&category=audit.data-access
+   Authorization: Bearer <token>
+   ```
 
-```text
-GET <url>/auditlog/v2/auditlogrecords?time_from=2026-09-17T07:00:00&time_to=2026-09-17T08:00:00&category=audit.data-access
-Authorization: Bearer <token>
-```
-
-The `<url>` comes from the reader credentials. UTC times use `YYYY-MM-DDTHH:MM:SS`;
-without a time filter the API searches the previous 30 days. Pages contain up to
-500 records: URL-encode the `Paging: handle=…` value as the next request's `handle`
-parameter. HTTP 204 means an empty result. Regional rate limits differ; back off
-on 429. If category filtering returns 501 for your retention/landscape, omit it
-and filter retrieved records locally. See SAP's linked API contract for current limits.
-
-ARC-1 invocation records have `object.type = "MCP Tool Call"`, a request ID and an
-`args` attribute containing redacted arguments, cut after 500 characters with `...`
-appended. Completion records carry the outcome instead. Use `space_id` for deployment
-attribution and the `target` attribute when present; one space is not necessarily
-one SAP system. Keep retrieved records private.
+   `<url>` comes from the reader credentials. UTC times use `YYYY-MM-DDTHH:MM:SS`;
+   without a time filter the API searches the previous 30 days. Pages contain up
+   to 500 records: URL-encode `Paging: handle=…` as the next request's `handle`
+   parameter. HTTP 204 means an empty result. Back off on 429. If category
+   filtering returns 501 for your landscape, omit it and filter locally. See
+   SAP's linked API contract for current limits.
+4. Match `object.type = "MCP Tool Call"`, tool, user, `space_id`, request ID and the
+   UTC window together. Use `target` when present; a space can serve several SAP
+   systems. Invocation records include redacted `args` (cut after 500 characters
+   with `...` appended); completion records carry the outcome. Retain the matched
+   evidence privately. If these fields do not distinguish concurrent requests,
+   repeat with a fresh known call in a quiet window.
 
 Delivery is asynchronous: one eu10 check took 11 minutes, which is an observation,
 not a delivery guarantee. Recheck the same known event before diagnosing loss.
