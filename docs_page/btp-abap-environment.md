@@ -114,7 +114,7 @@ acceptance — see [BTP Cloud Foundry Deployment](btp-cloud-foundry-deployment.m
 
 ### 5. Verify
 
-With `ARC1_LOG_LEVEL=debug`, make one tool call and check `cf logs arc1-btp-abap --recent`:
+With `SAP_VERBOSE=true`, make one tool call and check `cf logs arc1-btp-abap --recent`:
 
 ```
 BTP destination resolved  destination:ABAP_PP  ppEnabled:true

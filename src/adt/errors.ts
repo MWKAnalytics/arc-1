@@ -888,7 +888,7 @@ function describeAuthEndpoint(path?: string): string | undefined {
       'Reading the short-dump detail was forbidden, even if listing dumps works. ' +
       'The forbidden resource is `/sap/bc/adt/runtime/dump/{id}` (transaction ST22). ' +
       'Typical authorization objects to check: `S_ADMI_FCD` with value `ST22` ' +
-      '(ABAP runtime error analysis) and `S_ADT_RES` (ACTVT 03) on the ' +
+      '(ABAP runtime error analysis) and `S_ADT_RES` with `URI` covering ' +
       '`/sap/bc/adt/runtime/dump/*` resource path.'
     );
   }
@@ -898,8 +898,8 @@ function describeAuthEndpoint(path?: string): string | undefined {
     return (
       'Listing short dumps was forbidden. The forbidden resource is ' +
       '`/sap/bc/adt/runtime/dumps` (transaction ST22). Typical authorization ' +
-      'objects to check: `S_ADMI_FCD` with value `ST22` and `S_ADT_RES` ' +
-      '(ACTVT 03) on the `/sap/bc/adt/runtime/dumps` resource path.'
+      'objects to check: `S_ADMI_FCD` with value `ST22` and `S_ADT_RES` with `URI` ' +
+      'covering `/sap/bc/adt/runtime/dumps`.'
     );
   }
 
@@ -908,7 +908,7 @@ function describeAuthEndpoint(path?: string): string | undefined {
     return (
       'Reading the SAP Gateway error log was forbidden. The forbidden resource is ' +
       '`/sap/bc/adt/gw/errorlog/*` (transaction `/IWFND/ERROR_LOG`). Typical ' +
-      'authorization objects to check: `S_ADT_RES` (ACTVT 03) on ' +
+      'authorization objects to check: `S_ADT_RES` with `URI` covering ' +
       '`/sap/bc/adt/gw/errorlog/*`, plus the OData Gateway role that grants ' +
       'access to `/IWFND/ERROR_LOG`.'
     );

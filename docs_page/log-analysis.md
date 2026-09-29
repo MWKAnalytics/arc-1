@@ -24,14 +24,13 @@ Logging** for a managed observability stack.
 
 ## Log Levels
 
-Control stderr verbosity with `ARC1_LOG_LEVEL`:
+Use `SAP_VERBOSE=true` (or `--verbose`) to include debug events on stderr, such as
+HTTP requests and CSRF probes. The default is INFO and above. Set the option on the
+ARC-1 process and restart it; on CF, use an `.mtaext` property for a durable setting.
 
-```bash
-ARC1_LOG_LEVEL=debug  # Show everything (HTTP requests, CSRF fetches)
-ARC1_LOG_LEVEL=info   # Default — tool calls, auth events
-ARC1_LOG_LEVEL=warn   # Only warnings and errors
-ARC1_LOG_LEVEL=error  # Only errors
-```
+`ARC1_LOG_LEVEL` / `--log-level` is currently parsed but not applied to the logger.
+Use `SAP_VERBOSE` for debug output; WARN-only and ERROR-only filtering are not
+currently available through these options.
 
 The file sink always receives ALL events regardless of stderr level. E2E runs retain it as
 `mcp-audit.ndjson` beside `mcp-server.log` in the uploaded log directory. CSRF events describe
@@ -114,7 +113,7 @@ active) or `400` — **this is expected and is recorded as data, not an error.**
 logged at `debug`, so they do **not** appear at the default `info` level. A clean startup has **no
 `WARN` lines** from probing.
 
-If you run with `ARC1_LOG_LEVEL=debug`, you'll see them — and they're still harmless:
+If you run with `SAP_VERBOSE=true`, you'll see them — and they're still harmless:
 
 ```
 DEBUG: [http_request] {"method":"GET","path":"/sap/bc/adt/abapgit/repos","statusCode":404,...}

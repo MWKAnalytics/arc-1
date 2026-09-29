@@ -604,7 +604,7 @@ describe('AdtApiError', () => {
       expect(classification?.hint).toContain('short-dump detail');
       expect(classification?.hint).toContain('S_ADMI_FCD');
       expect(classification?.hint).toContain('ST22');
-      expect(classification?.hint).toContain('S_ADT_RES');
+      expect(classification?.hint).toContain('`S_ADT_RES` with `URI`');
       expect(classification?.hint).toContain('/sap/bc/adt/runtime/dump/');
       expect(classification?.hint).toContain('SU53');
     });
@@ -620,7 +620,7 @@ describe('AdtApiError', () => {
       expect(classification?.hint).toContain('Listing short dumps');
       expect(classification?.hint).toContain('S_ADMI_FCD');
       expect(classification?.hint).toContain('ST22');
-      expect(classification?.hint).toContain('S_ADT_RES');
+      expect(classification?.hint).toContain('`S_ADT_RES` with `URI`');
       expect(classification?.hint).not.toContain('short-dump detail');
     });
 
@@ -633,7 +633,7 @@ describe('AdtApiError', () => {
       expect(classification?.category).toBe('authorization');
       expect(classification?.hint).toContain('SAP Gateway error log');
       expect(classification?.hint).toContain('/IWFND/ERROR_LOG');
-      expect(classification?.hint).toContain('S_ADT_RES');
+      expect(classification?.hint).toContain('`S_ADT_RES` with `URI`');
       expect(classification?.hint).toContain('/sap/bc/adt/gw/errorlog/');
     });
 

@@ -163,7 +163,7 @@ that still returns usable discovery information.
 To verify, filter `STAUTHTRACE` to the technical user, record all checks, start ARC-1,
 then stop the trace and compare the denied checks with `SAPManage(action="features")`,
 which returns cached probe results without a SAP call. Individual probe logs require
-`ARC1_LOG_LEVEL=debug`; they are not visible at the default INFO level.
+`SAP_VERBOSE=true`; they are not visible at the default INFO level.
 Use a propagated developer account to verify the actual tools separately. `SU53`
 shows only the last failed check and cannot replace this trace. Keep write and
 execute permissions out of this startup-only role.
