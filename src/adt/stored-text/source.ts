@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { generateRequestId, getCurrentContext, requestContext } from '../../server/context.js';
 import type { AdtClient } from '../client.js';
-import { AdtError, AdtNetworkError } from '../errors.js';
+import { AdtApiError, AdtError, AdtNetworkError } from '../errors.js';
 import { assembleChunks, keyFilters } from './chunks.js';
 import { TextReadError } from './errors.js';
 import { normalizeTextKey as canonicalKey } from './key.js';
@@ -148,7 +148,7 @@ export async function withStoredTextSession<T>(
     }
   }
   async function configuration(table: string, columns: string[], where: QueryOptions['where']): Promise<Row> {
-    const cacheKey = JSON.stringify([table, where]);
+    const cacheKey = JSON.stringify([table, columns, where]);
     let pending = config.get(cacheKey);
     if (!pending) {
       pending = query(table, { columns, where, maxRows: 2 }).then((rows) => {
@@ -165,18 +165,29 @@ export async function withStoredTextSession<T>(
     }
     return pending;
   }
+  // HANDLER_CLASS is missing on older releases (TTXOB/TTXID on 7.50 SP23 have neither column); there
+  // every text uses the default persistence. SAP rejects the statement with 400. The retry differs
+  // only by that column, so its success proves the column is absent; any other failure surfaces.
+  async function handlerConfiguration(table: string, columns: string[], where: QueryOptions['where']): Promise<Row> {
+    try {
+      return await configuration(table, [...columns, 'HANDLER_CLASS'], where);
+    } catch (error) {
+      if (!(error instanceof AdtApiError) || error.statusCode !== 400) throw error;
+      return { ...(await configuration(table, columns, where)), HANDLER_CLASS: '' };
+    }
+  }
   const source: StoredTextSource = {
     async assertSupportedKey(requested) {
       checkSession();
       const key = canonicalKey(requested);
-      const object = await configuration(
+      const object = await handlerConfiguration(
         'TTXOB',
-        ['TDOBJECT', 'HANDLER_CLASS'],
+        ['TDOBJECT'],
         [{ field: 'TDOBJECT', op: '=', value: key.TDOBJECT }],
       );
-      const id = await configuration(
+      const id = await handlerConfiguration(
         'TTXID',
-        ['TDOBJECT', 'TDID', 'HANDLER_CLASS'],
+        ['TDOBJECT', 'TDID'],
         [
           { field: 'TDOBJECT', op: '=', value: key.TDOBJECT },
           { field: 'TDID', op: '=', value: key.TDID },

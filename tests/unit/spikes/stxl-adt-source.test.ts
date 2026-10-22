@@ -195,6 +195,62 @@ describe('stored-text ADT source', () => {
     expect(query).toHaveBeenCalledTimes(6);
   });
 
+  it('falls back to the default persistence where TTXOB/TTXID have no HANDLER_CLASS column (7.50)', async () => {
+    const { client, query } = setup();
+    query.mockImplementation(async (table, opts) => {
+      if (opts?.columns?.includes('HANDLER_CLASS'))
+        throw new AdtApiError('SQL statement invalid', 400, '/sap/bc/adt/datapreview/freestyle');
+      return {
+        columns: [],
+        rows: table === 'TTXOB' ? [{ TDOBJECT: 'TEXT' }] : table === 'TTXID' ? [{ ...key }] : [{ SPRAS: 'E' }],
+      };
+    });
+    await withStoredTextSession(client, '001', async (source) => {
+      await source.assertSupportedKey(key);
+      await source.assertSupportedKey({ ...key, TDNAME: 'ANOTHER' });
+    });
+    expect(query.mock.calls.map(([table, opts]) => [table, opts?.columns])).toEqual([
+      ['TTXOB', ['TDOBJECT', 'HANDLER_CLASS']],
+      ['TTXOB', ['TDOBJECT']],
+      ['TTXID', ['TDOBJECT', 'TDID', 'HANDLER_CLASS']],
+      ['TTXID', ['TDOBJECT', 'TDID']],
+      ['T002', ['SPRAS']],
+    ]);
+  });
+
+  it('keeps the handler check where only one table lacks the column', async () => {
+    const { client, query } = setup();
+    query.mockImplementation(async (table, opts) => {
+      if (table === 'TTXOB' && opts?.columns?.includes('HANDLER_CLASS'))
+        throw new AdtApiError('SQL statement invalid', 400, '/sap/bc/adt/datapreview/freestyle');
+      return {
+        columns: [],
+        rows:
+          table === 'TTXOB'
+            ? [{ TDOBJECT: 'TEXT' }]
+            : table === 'TTXID'
+              ? [{ TDOBJECT: 'TEXT', TDID: 'ST', HANDLER_CLASS: 'Z_CUSTOM' }]
+              : [{ SPRAS: 'E' }],
+      };
+    });
+    await expect(
+      withStoredTextSession(client, '001', (source) => source.assertSupportedKey(key)),
+    ).rejects.toMatchObject({
+      code: 'UNSUPPORTED_PERSISTENCE',
+    });
+  });
+
+  it('retries only a 400 and surfaces a failure of the retry', async () => {
+    for (const status of [400, 403, 500]) {
+      const { client, query } = setup();
+      query.mockRejectedValue(new AdtApiError('failed', status, '/sap/bc/adt/datapreview/freestyle'));
+      await expect(
+        withStoredTextSession(client, '001', (source) => source.assertSupportedKey(key)),
+      ).rejects.toMatchObject({ statusCode: status });
+      expect(query).toHaveBeenCalledTimes(status === 400 ? 2 : 1);
+    }
+  });
+
   it('rejects unknown configuration, missing handler metadata, and custom persistence', async () => {
     for (const objectRows of [[], [{ TDOBJECT: 'TEXT' }], [{ TDOBJECT: 'TEXT', HANDLER_CLASS: 'Z_CUSTOM' }]]) {
       const { client, query } = setup();

@@ -235,6 +235,23 @@ describe('SAPQuery long_text public dispatch with real source orchestration and 
     expect(fixture.calls.every(({ options }) => options.preserveLiteralSpaces === true)).toBe(true);
     expect(mockFetch).not.toHaveBeenCalled();
   });
+  it('reads on releases whose text configuration has no HANDLER_CLASS column (7.50)', async () => {
+    const { client, fixture, query } = setup();
+    for (const table of ['TTXOB', 'TTXID']) for (const row of fixture.tables[table]) delete row.HANDLER_CLASS;
+    query.mockImplementation(async (table, options) => {
+      if (options?.columns?.includes('HANDLER_CLASS'))
+        throw new AdtApiError('SQL statement invalid', 400, '/sap/bc/adt/datapreview/freestyle');
+      return fixture.query(table, options);
+    });
+    const read = await payload(
+      await handleToolCall(client, config, 'SAPQuery', readArgs([fixture.keys.invoice]), auth(['data'])),
+    );
+    expect(read.items[0]).toMatchObject({
+      status: 'ok',
+      lineCount: 1,
+      lines: [{ format: '*', text: 'Payment within 30 days.' }],
+    });
+  });
   it('preserves batch order, duplicates, and distinct missing/non-ITF/reference failures', async () => {
     const { client, fixture } = setup();
     const inputs = [
