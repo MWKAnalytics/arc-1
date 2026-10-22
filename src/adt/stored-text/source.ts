@@ -165,7 +165,9 @@ export async function withStoredTextSession<T>(
           throw new TextReadError('UNSUPPORTED_PERSISTENCE', 'required text configuration is absent or ambiguous');
         if (
           !Array.isArray(returnedColumns) ||
-          returnedColumns.some((field) => typeof field !== 'string' || !/^[A-Z][A-Z0-9_]*$/u.test(field)) ||
+          returnedColumns.some(
+            (field) => typeof field !== 'string' || !/^(?:\/[A-Z0-9_]+\/)?[A-Z][A-Z0-9_]*$/u.test(field),
+          ) ||
           new Set(returnedColumns).size !== returnedColumns.length ||
           requiredFields.some((field) => !returnedColumns.includes(field)) ||
           returnedColumns.some((field) => typeof rows[0][field] !== 'string') ||

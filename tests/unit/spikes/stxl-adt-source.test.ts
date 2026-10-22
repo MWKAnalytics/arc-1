@@ -244,6 +244,28 @@ describe('stored-text ADT source', () => {
     },
   );
 
+  it.each(['', 'Z_CUSTOM'])('accepts namespaced append columns without hiding the handler: %s', async (handler) => {
+    const { client, query } = setup();
+    query.mockImplementation(async (table) =>
+      tableResult(
+        table === 'T002'
+          ? [{ SPRAS: 'E' }]
+          : [
+              {
+                TDOBJECT: 'TEXT',
+                ...(table === 'TTXID' ? { TDID: 'ST' } : {}),
+                '/ARC/EXTRA': 'append data',
+                HANDLER_CLASS: handler,
+              },
+            ],
+      ),
+    );
+    const check = withStoredTextSession(client, '001', (source) => source.assertSupportedKey(key));
+    if (handler) await expect(check).rejects.toMatchObject({ code: 'UNSUPPORTED_PERSISTENCE' });
+    else await expect(check).resolves.toBeUndefined();
+    expect(query).toHaveBeenCalledTimes(3);
+  });
+
   it.each([400, 403, 404, 500])(
     'propagates HTTP %s without interpreting a successful reduced query as column absence',
     async (status) => {
