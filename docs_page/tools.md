@@ -1567,8 +1567,9 @@ and no RFC or installed ABAP helper. Enable `SAP_ALLOW_DATA_PREVIEW=true`; authe
 also need `data` scope and SAP access to `STXH`, `STXL`, `TTXOB`, `TTXID`, and `T002`.
 Table blocklists and response limits still apply.
 This action is unavailable on BTP ABAP targets and systems without the required data-preview endpoint.
-Where `TTXOB`/`TTXID` have no `HANDLER_CLASS` column (observed on 7.50 SP23), the texts use the
-default persistence; ARC-1 then repeats the configuration read without that column.
+ARC-1 reads complete configuration rows from `TTXOB`/`TTXID`. If a table has no `HANDLER_CLASS`
+column (reported on 7.50 SP23), ARC-1 treats it as using the default persistence. Custom handlers
+remain unsupported; failed or malformed configuration reads are rejected.
 
 **1. Discover a key** when you know the text object and name prefix:
 

@@ -910,8 +910,9 @@ it can reuse the same safe contract.
 references, and bounded phrase search for the qualified FF06/4103 classic ITF profile
 ([implementation and evidence](https://github.com/arc-mcp/arc-1/pull/1012)). Other container/code-page
 profiles, legacy ITCRF references, and non-ITF/STXB text remain unsupported. 750 systems without the
-ADT preview endpoint stay unsupported; a 750 SP23 system with it reads through the default persistence
-because its TTXOB/TTXID have no `HANDLER_CLASS` column. Memory, archives, custom/upgrade persistence, and form
+ADT preview endpoint stay unsupported. A reporter validated a test build on 750 SP23, whose
+TTXOB/TTXID lack `HANDLER_CLASS`; final-branch confirmation of [#1077](https://github.com/arc-mcp/arc-1/issues/1077)
+is pending. Memory, archives, custom/upgrade persistence, and form
 layouts need separate API evidence; they cannot be inferred from ordinary table bytes.
 
 **Resume with.** A concrete unsupported customer case and independently generated SAP oracle
