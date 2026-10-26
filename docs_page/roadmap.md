@@ -1,6 +1,6 @@
 # ARC-1 Idea Roadmap
 
-**Last reviewed:** 2026-10-21
+**Last reviewed:** 2026-10-22
 
 This page is ARC-1's idea parking lot. It records worthwhile work that is **not implemented now** so
 it does not disappear, but it is not a delivery schedule and it does not answer "what should we do
@@ -68,13 +68,17 @@ sequence.
 | [ARCH-01](#arch-01) | Discovery-driven endpoint routing | P1 | M | Ready | Architecture |
 | [ARCH-02](#arch-02) | Server-driven source-state version verification | P3 | S | Needs research | Architecture |
 | [FEAT-59](#feat-59) | Embeddable multi-tenant server API | P3 | L | Revisit on trigger | Architecture |
+| [FEAT-93](#feat-93) | Broader pinned PP mutation capabilities | P2 | XL | Needs research | Architecture |
 | [SEC-16](#sec-16) | Client ID Metadata Documents (CIMD / SEP-991) | P1 | XL | Parked proposal | Auth / Compatibility |
 | [SEC-15](#sec-15) | Durable DCR signing-key lifecycle | P2 | L | Needs research | Auth / Operations |
 | [COMPAT-06](#compat-06) | Standard outbound proxy support | P2 | M | Ready | Compatibility |
 | [COMPAT-07](#compat-07) | CDS view-entity replacement lineage | P2 | S | Needs research | Compatibility |
 | [COMPAT-16](#compat-16) | API-release directory cleanup | P2 | S | Needs research | Compatibility |
-| [COMPAT-17](#compat-17) | Package contents without filtered search | P2 | M | Needs research | Compatibility |
+| [COMPAT-17](#compat-17) | Direct package browser release coverage | P2 | S | Needs research | Compatibility |
 | [COMPAT-18](#compat-18) | Newly created program metadata on 7.50 | P2 | S | Needs research | Compatibility |
+| [COMPAT-19](#compat-19) | Remaining BTP IDE navigation qualification | P1 | S | Needs environment | Compatibility |
+| [COMPAT-20](#compat-20) | Canonical ADT editor identity for AI edits | P2 | M | Needs research | Compatibility |
+| [COMPAT-21](#compat-21) | Eclipse Copilot links and exact project selection | P2 | M | Needs research | Compatibility |
 | [COMPAT-10](#compat-10) | CDS set-operation lineage | P2 | M | Needs research | Compatibility |
 | [COMPAT-12](#compat-12) | Deletion with another user's text draft | P3 | S | Needs research | Compatibility |
 | [COMPAT-15](#compat-15) | Empty inactive text-pool recovery | P2 | M | Needs research | Compatibility |
@@ -117,7 +121,7 @@ sequence.
 | [FEAT-42](#feat-42) | Additional CI output formats | P3 | XS | Revisit on trigger | CI |
 | [OPS-02](#ops-02) | Bounded deep health check | P3 | S | Needs research | Operations |
 | [OPS-05](#ops-05) | SAP Cloud Logging and OpenTelemetry | P2 | L | Revisit on trigger | Operations |
-| [OPS-06](#ops-06) | Per-user SAP session reuse over HTTP | P2 | M | Needs research | Operations |
+| [OPS-06](#ops-06) | Per-user SAP session reuse beyond single-target Cloud Connector PP | P2 | M | Needs research | Operations |
 | [OPS-07](#ops-07) | Signed single-file executables | P3 | M | Revisit on trigger | Operations |
 | [OPS-08](#ops-08) | SAP outage isolation and queue deadlines | P2 | M | Needs research | Operations |
 | [FEAT-07](#feat-07) | Native TLS listener | P3 | M | Revisit on trigger | Operations |
@@ -173,6 +177,30 @@ would create a public compatibility surface without a known consumer.
 
 **Resume when.** A concrete embedding customer can define lifecycle, isolation, writable-safety,
 and upgrade requirements. Do not widen the mutation-free multi-target contract as a shortcut.
+
+<a id="feat-93"></a>
+### FEAT-93 — Broader pinned PP mutation capabilities
+
+- **Priority / effort / status:** P2 / XL / Needs research
+- **Category:** Architecture
+
+**Remaining gap.** PR [#1080](https://github.com/arc-mcp/arc-1/pull/1080) implements the scoped
+CLAS/INTF create/main-update, CLAS method-edit and whole-owner activation contract for local and
+transportable packages, with exact target write grants and independent server/destination policy.
+Additional types, include editing, deletes, batches, package changes, RAP/DDIC and publication still
+need their own reviewed package, ownership, recording and activation contracts. General single-target
+parity is not implied. Aggregate and Basic writes remain rejected architectural alternatives.
+
+**Resume when.** A concrete development workflow needs one of those additional capabilities and
+its complete effect on SAP can be bounded and qualified. Extend the [ADR-0010 contract](https://github.com/arc-mcp/arc-1/blob/main/docs/adr/0010-pinned-pp-multi-target-writes.md)
+for that capability, including negative tests and live PP evidence; do not remove the explicit
+allowlist or add a second global write switch. Transport/Git management, caching, SaaS and embedding
+remain separate work. Keep operator configuration and effective-denial explanations explicit.
+
+**Prior work.** [#906](https://github.com/arc-mcp/arc-1/pull/906), the
+[alternatives assessment](https://github.com/arc-mcp/arc-1/blob/main/docs/research/2026-10-22-multi-target-write-strategy.md)
+and [V2 roadmap](https://github.com/arc-mcp/arc-1/blob/main/docs/plans/multi-target-v2-roadmap.md)
+remain design history; revalidate older gap statements against the current scoped implementation.
 
 ## Authentication, compatibility, and security
 
@@ -338,23 +366,24 @@ catalog rows automatically. See the
 [state plan](https://github.com/arc-mcp/arc-1/blob/main/docs/plans/2026-10-12-text-pool-state.md).
 
 <a id="compat-17"></a>
-### COMPAT-17 — Package contents without filtered search
+### COMPAT-17 — Direct package browser release coverage
 
-- **Priority / effort / status:** P2 / M / Needs research
+- **Priority / effort / status:** P2 / S / Needs research
 - **Category:** Compatibility
 
-**Remaining gap.** Classic ADT quick search can ignore `packageName` (verified on 750).
-Package listing now requires the advertised filter. Native `nodestructure` can list
-direct contents in two read-only POSTs using returned type-node IDs, but lacks a server
-result cap and reliable descriptions; indexed search also includes descendant packages.
+**Remaining gap.** Explicit `packageScope=direct` now provides bounded native
+contents on verified 750 SP02 and 758 SP02 contracts. Native 740 SP04, BTP ABAP,
+and an existing empty package remain unverified; empty trees deliberately return
+an ambiguous-result error. Indexed search and write-package authorization remain
+separate.
 
-**Resume with.** A bounded native listing contract with explicit scope, missing-versus-empty
-behavior and accurate completeness metadata. Preserve the current search path's descriptions;
-do not silently substitute an unbounded tree traversal or system-wide search.
-The [750/758 investigation](https://github.com/arc-mcp/arc-1/blob/main/docs/research/2026-10-22-legacy-package-browser.md)
-and [#1065](https://github.com/arc-mcp/arc-1/issues/1065) propose an explicit direct-contents mode.
-API semantics, empty-package evidence and large-package load still need resolution;
-740 SP04 support is unverified.
+**Resume with.** Sanitized native root/expansion evidence on those releases, or
+independent proof distinguishing an empty package from a missing/inaccessible
+one. Preserve direct scope, client budgets and unknown completeness; no automatic
+search/RFC/helper fallback. See [#1065](https://github.com/arc-mcp/arc-1/issues/1065),
+[the initial research](https://github.com/arc-mcp/arc-1/blob/main/docs/research/2026-10-22-legacy-package-browser.md)
+([research PR #1071](https://github.com/arc-mcp/arc-1/pull/1071)) and
+[the implementation plan](https://github.com/arc-mcp/arc-1/blob/main/docs/plans/2026-10-22-direct-package-browser.md).
 
 <a id="compat-18"></a>
 ### COMPAT-18 — Newly created program metadata on 7.50
@@ -374,6 +403,66 @@ source update and activation, so only its activation succeeded without recovery.
 **Resume with.** Verify source persistence and default/active/inactive metadata across releases;
 trace the SAP response before changing package resolution. Preserve fail-closed package checks. Unique E2E
 fixtures avoid the pre-delete, but do not fix this runtime gap; do not add a skip for it.
+
+<a id="compat-19"></a>
+### COMPAT-19 — Remaining BTP IDE navigation qualification
+
+- **Priority / effort / status:** P1 / S / Needs environment
+- **Category:** Compatibility
+
+**Remaining gap.** A4H/100 has successful discovery/source samples but recurring 120-second source
+read timeouts, reproduced on original 0.9.27 too. Second-user SAP identity, a known-but-ungranted
+live `xsuaa-attribute` target and PP-only multi-instance routing remain unqualified.
+
+**Already verified.** Public-router OAuth, pinned/aggregate PP and shared-Basic reads, request-local
+Eclipse preferences, restart/token refresh, and actual Copilot → SAP ADT MCP → VS Code opening.
+[Evidence and timeout trace anchors](https://github.com/arc-mcp/arc-1/blob/main/docs/research/ide-navigation-verification.md#historical-btp-matrix).
+
+**Resume with.** Trace the client-100 SAP/Connectivity source path, obtain a second authorized identity
+and denied-target account, then test an isolated PP-only multi-instance deployment. Keep the existing
+shared-Basic test app at one instance. Retain required aggregate `target`; stale Copilot validator
+recovery uses window reload and stable separate entries.
+
+<a id="compat-20"></a>
+### COMPAT-20 — Canonical ADT editor identity for AI edits
+
+- **Priority / effort / status:** P2 / M / Needs research
+- **Category:** Compatibility
+
+**Remaining gap.** Canonical opening does not establish dirty-buffer reuse, Keep/Undo, save,
+validation, transport or activation parity with the [ABAP Bridge](https://github.com/arc-mcp/arc1-abap-bridge).
+Local ADT session recovery, same-name/type collisions, includes and other clients also need qualification.
+
+**Already verified.** The simplified runtime `7b00407a` passed pinned/aggregate BTP reads, SAP name/type
+resolution, exact URI encoding, clicked interface/CDS opening and an explicit missing-object stop case.
+Earlier native-error retries failed; instructions cannot enforce cross-server behavior.
+[Current acceptance](https://github.com/arc-mcp/arc-1/blob/main/docs/research/ide-navigation-verification.md#final-simplified-runtime-acceptance).
+
+**Resume with.** Diagnose local session logoff; test dirty buffers and each edit/save operation on
+disposable objects. A local picker could save each developer's confirmed connection/target mapping;
+SAP's first-match SID fallback cannot verify backend/client. No ARC-1 VS Code mapping settings remain.
+[Decisions and original requirements](https://github.com/arc-mcp/arc-1/blob/main/docs/research/ide-navigation-decisions.md).
+
+<a id="compat-21"></a>
+### COMPAT-21 — Eclipse Copilot links and exact project selection
+
+- **Priority / effort / status:** P2 / M / Needs research
+- **Category:** Compatibility
+
+**Remaining gap.** Direct Eclipse Copilot clicking and exact project/backend matching. User screenshots
+show chooser and source but do not identify whether the direct or adjacent HTTP handoff link initiated it.
+Same SID/client can describe different backends; ARC-1 cannot force a chooser.
+
+**Already verified.** Local `npx`, HTTP/BTP pinned/aggregate reads, preference forwarding, rendering,
+restart recovery and native-dialog opening for CLAS/INTF/PROG/DDLS. Isolated Claude plugin preference
+substitution passed; installed ARC-1 UI and Desktop opening remain unqualified.
+Namespaced Eclipse opening is unverified. Live HTTP evidence used the retired combined `on` mode;
+the current `eclipse`-only mode has automated coverage, pending a fresh live Eclipse run.
+
+**Resume with.** Enable the `adt` handler and manually click a fresh answer containing only the direct
+link. Qualify project-name authorities, collisions, missing/cloud projects and other OSes before richer
+links or a companion. Keep per-client opt-in; defer the plugin dropdown pending a minimum-client policy.
+[Options and evidence limits](https://github.com/arc-mcp/arc-1/blob/main/docs/research/ide-navigation-decisions.md#eclipse-contract-and-unresolved-selection).
 
 <a id="sec-14"></a>
 ### SEC-14 — DNS rebinding and Host-header hardening
@@ -717,8 +806,8 @@ contract can be captured.
 - **Priority / effort / status:** P3 / S / Needs research
 - **Category:** Object coverage
 
-**Idea.** Extend `TABL/DTT` updates to storage type, load unit or logging only where
-SAP advertises an editable, verified contract. Data class, size category and buffering
+**Idea.** Extend `TABL/DTT` updates to storage type or load unit only where
+SAP advertises an editable, verified contract. Data class, size category, buffering and logging
 already have separate read/update/activation support; table DDL annotations are outside this gap.
 
 **Why it remains.** The additional fields vary by release and can be read-only. Current
@@ -1051,25 +1140,31 @@ Application Logging deployment. Define the required signals, retention, service 
 exporter support before implementation.
 
 <a id="ops-06"></a>
-### OPS-06 — Per-user SAP session reuse over HTTP
+### OPS-06 — Per-user SAP session reuse beyond single-target Cloud Connector PP
 
 - **Priority / effort / status:** P2 / M / Needs research
 - **Category:** Operations
 
-**Idea.** Reuse a principal-propagation user's SAP session across MCP HTTP requests instead of
-logging on again for every tool call.
+**Idea.** Reuse a per-user SAP session across MCP HTTP requests for the routes that still log on
+again for every tool call: multi-target PP clients and single-target PP destinations that return a
+Bearer token (OAuth2UserTokenExchange), a SAMLAssertion, or a credential without a usable JWT expiry.
 
-**Why it remains.** HTTP mode builds an MCP Server per request. The shared single-target SAP
-transport is reused with ten-minute replacement for new requests, but per-user PP clients and
-multi-target clients are still built per request, so each tool call logs on again and refetches a
-CSRF token. On SAP_BASIS 816 such bursts coincided with fresh stateful contexts failing (`400 Session not found`); see the
+**Why it remains.** HTTP mode builds an MCP Server per request. The shared single-target transport
+and, since [#1085](https://github.com/arc-mcp/arc-1/issues/1085), single-target Cloud Connector PP
+transports (keyed by the exact per-user credential and route) are reused until ten minutes or JWT
+expiry. The affected deployment still needs to confirm the cause of its reported 400 responses.
+Multi-target clients and the Bearer/SAMLAssertion PP routes are still built per request,
+so each tool call logs on again and refetches a CSRF token. On SAP_BASIS 816 such bursts coincided
+with fresh stateful contexts failing (`400 Session not found`); see the
 [investigation](https://github.com/arc-mcp/arc-1/blob/main/docs/research/2026-09-27-sap-816-session-failures.md).
+SAMLAssertion requests also send `x-sap-security-session: create`, so reuse there needs its own
+evidence.
 
-**Resume when.** A PP or multi-target deployment reports `400 Session not found` or failed stateful
-closes under load, or SAP logon volume becomes an operator concern. Key any cache by SAP identity and
-token lifetime, keep users isolated, and keep ADR-0007's request-local Basic credentials.
-Specify credential revocation and an absolute reuse lifetime before extending the sharing model;
-the single-target transport's bounded reuse and remaining revocation limitations are documented in
+**Resume when.** A multi-target or Bearer/SAMLAssertion PP deployment reports `400 Session not found`
+or failed stateful closes under load, or SAP logon volume becomes an operator concern. Key any cache
+by SAP identity and token lifetime, keep users isolated, keep ADR-0007's request-local Basic
+credentials, and keep ADR-0010's per-call drift checks. Reuse the single-target bound and revocation
+notes in
 [security-model R21](https://github.com/arc-mcp/arc-1/blob/main/docs/security-model.md#r21-shared-login-credential-freshness).
 
 <a id="ops-07"></a>

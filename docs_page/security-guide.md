@@ -232,12 +232,32 @@ used when per-user SAP authorization or horizontal scaling is required. See
 [ADR-0007](https://github.com/arc-mcp/arc-1/blob/main/docs/adr/0007-shared-basic-identity-for-read-only-multi-target.md)
 and [Multi-System Setup](multi-target-setup.md).
 
+For [scoped pinned PP writes](multi-target-writes.md), every call also requires the global write
+ceiling, destination opt-in and restrictions, verified raw write scope, read access grant and exact
+write-target grant. Aggregate and Basic connections stay mutation-free. `MCPTargetDeveloper`
+contains application-wide functional scopes: enable target-filtered mode before assigning it.
+Package restrictions do not constrain what authored ABAP does when activated or run by ABAP Unit;
+keep `SAPDiagnose.unittest` denied unless that execution is intended.
+
 ### Shared SAP login lifetime and credential rotation
 
 Single-target HTTP deployments reuse the shared identity's SAP login cookies and CSRF token
 across tool calls (#871). Each call still gets fresh object/package caches and its own scope
 restrictions. JWT principal-propagation clients and multi-target clients do not receive this
 shared transport.
+
+Single-target Cloud Connector principal propagation reuses each user's **own** login when
+`SAP-Connectivity-Authentication` carries a JWT with a known expiry. A different credential or
+route gets a separate login. Reuse ends at ten minutes or credential expiry, whichever comes first;
+the pool retains at most 500 entries. Other PP authentication modes and multi-target routes stay
+request-local. In stderr/file audit logs, successful `auth_pp_created` events report `transportReuse`
+as `pooled-new`, `pooled-reused`, or `request-local` without exposing credentials. This tracks the
+transport, not SAP logins: a reused transport can still need to log on again after SAP ends its session.
+
+This reduces repeated logins. SAP's unused-session limit is consistent with the symptoms in
+[#1085](https://github.com/arc-mcp/arc-1/issues/1085), but that deployment's cause still needs SAP-side
+confirmation. On a cold login, other calls wait for its first response. A session reset can interrupt
+another call's CSRF bootstrap; write contexts remain separate.
 
 **Transport renewal:** once a transport is ten minutes old, a new HTTP request gets a replacement.
 Requests already created retain the old one, so lock/save/unlock and late responses stay together.
@@ -263,7 +283,10 @@ the affected HTTP security sessions (SM05) and address outstanding SSO tickets u
 incident procedure. Restarting ARC-1 discards its in-memory cookies; it does not revoke tickets
 copied elsewhere. Replace configured cookie files/strings too if using the development SSO bridge.
 ARC-1's existing 401 recovery is not a revocation mechanism and does not guarantee automatic
-recovery of a write.
+recovery of a write. For principal propagation, lock the user in SAP and terminate their HTTP
+security sessions (SM05). Unmapping alone may leave an issued SSO ticket usable; ending sessions
+alone lets a still-authorized user log on again.
+Revoke BTP access too; already-issued tokens and admitted calls may remain valid.
 
 SAP recommends `login/create_sso2_ticket=3` to issue assertion tickets without logon tickets, but
 legacy SSO consumers may require `2`. Have the SAP owner assess that landscape-wide setting
@@ -345,7 +368,8 @@ tool call. See [setup](btp-cloud-foundry-deployment.md#optional-btp-audit-log-si
 | `safety_blocked` | Safety ceiling blocked an operation; includes the operation and safe reason. |
 | `server_start` | Server version, transport, write ceiling, configured target URL indicator, and process ID where available. |
 | `activation_preaudit_completed` | Two-phase SAP activation preaudit result, reference count, and phase durations. |
-| `oauth_client_registered` | XSUAA only: a new DCR `client_id` was minted (`/register`). Includes id length and redirect-URI count. |
+| `oauth_client_registered` | XSUAA only: a new DCR `client_id` was minted (`/register`). Includes id length, redirect-URI count and parsed redirect hosts. |
+| `oauth_client_registration_rejected` | XSUAA only: DCR registration was refused. Includes client name, parsed callback host when available, and a reason; no submitted path, query or credentials. |
 | `oauth_client_lookup_failed` | XSUAA only: a `client_id` failed to resolve. `reason` ∈ {`unknown_prefix`, `malformed`, `bad_signature`, `invalid_payload`, `expired`}. Useful for spotting forgery / probing. |
 | `oauth_redirect_uri_registered` | XSUAA only: a redirect URI matched the manual-client policy at `/authorize` and was added to ARC-1's in-memory client metadata. The XSUAA service configuration is unchanged. |
 | `oauth_redirect_uri_rejected` | XSUAA only: an unapproved redirect URI was rejected at `/authorize`; useful for detecting interception attempts or bad client configuration. |
@@ -358,6 +382,8 @@ Every entry has `timestamp`, `level`, and `event`. Events within one MCP tool ca
 calls also add `destination`, public `target`, and `identity` (`per-user` or `shared`). Destination
 credentials, bearer tokens, cookies, authorization headers, and other secret values are centrally
 redacted before any sink write.
+
+OAuth lifecycle events are available through stderr (subject to the log level) and the configured file sink. The BTP Audit Log sink currently does not forward these events.
 
 ### Retention
 
@@ -538,12 +564,19 @@ pick up newly published OS security fixes.
 `audit-ci.json` temporarily accepts only
 [`GHSA-86w9-cpqp-85rv`](https://github.com/advisories/GHSA-86w9-cpqp-85rv), the RSA
 signature-verification advisory affecting `node-forge` through 1.4.0 with no published patch as of
-21 October 2026. The exception expires automatically at **00:00 Europe/Berlin on 28 October 2026**.
-Its first window (to 21 October) was renewed for one week after rechecking that neither `node-forge`,
-`jks-js` nor `@sap-cloud-sdk/connectivity` had published a release that removes the affected dependency
-path. It lets unrelated dependency maintenance proceed; it does not fix the vulnerability or
-establish that ARC-1 cannot be affected. Remove the exception when the affected dependency paths are
-fixed, or reassess it before expiry in a separate reviewed change.
+24 October 2026. The exception expires automatically at **00:00 Europe/Berlin on 31 December 2026**.
+The maintainer renewed it on 24 October based on
+[SAP's completed assessment of 23 October](https://github.com/SAP/cloud-sdk-js/issues/7023#issuecomment-6365515697).
+The reviewed dependency path is `@sap-cloud-sdk/connectivity@4.9.1 → jks-js@1.1.7 → node-forge@1.4.0`.
+SAP concludes that this keystore parsing and conversion flow does not reach Forge's vulnerable RSA
+verifier; certificate verification uses Node's native TLS stack. This supports low practical risk
+for the reviewed usage. The dependency remains affected, and the assessment does not cover other
+uses of Forge.
+
+The allowlist matches the advisory ID; the reviewed dependency path is the basis for the acceptance,
+not an additional CI-enforced restriction. Upgrade and remove the exception when a validated
+upstream fix is available. Reassess sooner if dependency versions or usage change, or SAP revises
+its assessment, and review before expiry in a separate change.
 
 Run `npm run audit:ci` and `npm run audit:ci -- --directory btp/approuter` to reproduce the PR
 gates. Both retain the high/critical threshold, development dependencies, and the existing optional

@@ -27,6 +27,7 @@ import { readEnhancementImplementation } from './enhancements.js';
 import { AdtApiError, AdtError, AdtSafetyError, isNotFoundError } from './errors.js';
 import { AdtHttpClient, type AdtHttpConfig, type AdtResponse } from './http.js';
 import type { AdtRequestOptions } from './http-deadline.js';
+import { getDirectPackageContents } from './package-browser.js';
 import { requirePackageFilteredSearch } from './package-contents.js';
 import { AdtPackageHierarchyResolver, type PackageHierarchyResolver } from './package-hierarchy.js';
 import { canonicalRevisionSourcePath } from './path-safety.js';
@@ -1196,6 +1197,11 @@ export class AdtClient {
 
   // ─── Package Operations ────────────────────────────────────────────
 
+  /** Explicit bounded direct contents; does not replace indexed search or the safety resolver. */
+  async getDirectPackageContents(packageName: string, maxResults?: number, objectType?: string) {
+    return getDirectPackageContents(this.http, this.safety, packageName, maxResults, objectType);
+  }
+
   /**
    * Get package contents (objects and subpackages).
    *
@@ -1674,7 +1680,7 @@ WHERE d~TABNAME = '${table}' AND d~AS4LOCAL = 'A'`;
    * surfaces the package as a denormalised attribute. Both shapes resolve
    * to the same package; we accept either.
    */
-  async resolveObjectPackage(objectUrl: string, accept?: string): Promise<string> {
+  async resolveObjectPackage(objectUrl: string, accept?: string, options?: AdtRequestOptions): Promise<string> {
     checkOperation(this.safety, OperationType.Read, 'ResolveObjectPackage');
     // Server-driven objects (8.16+) only render their <blue:blueSource> metadata (with the
     // adtcore:packageRef) under the blues.vN+xml Accept — callers pass it so the allowedPackages
@@ -1684,7 +1690,7 @@ WHERE d~TABNAME = '${table}' AND d~AS4LOCAL = 'A'`;
     // bindings resource), and that 406 body names no accepted type, so the generic negotiation
     // retry cannot recover. Parameters select nothing on these metadata reads.
     const bareAccept = accept?.split(';')[0]?.trim();
-    const resp = await this.http.get(objectUrl, bareAccept ? { Accept: bareAccept } : undefined);
+    const resp = await this.http.get(objectUrl, bareAccept ? { Accept: bareAccept } : undefined, options);
     const packageRefMatch = resp.body.match(/adtcore:packageRef[^>]*adtcore:name="([^"]*)"/);
     if (packageRefMatch?.[1]) return packageRefMatch[1];
     const containerRefMatch = resp.body.match(/adtcore:containerRef[^>]*adtcore:packageName="([^"]*)"/);

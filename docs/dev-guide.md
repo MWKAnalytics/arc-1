@@ -38,6 +38,21 @@ Lives in [docs_page/configuration-reference.md](../docs_page/configuration-refer
 CLI flags, clamps, layer interactions — the user-facing reference is the single verbose source;
 duplicating it here proved to drift). The compact per-variable table stays in AGENTS.md.
 
+## Native IDE source links
+
+VS Code navigation composes ARC-1 research with the local SAP ADT MCP resolver. The initialize hint in
+`server-instructions.ts` is always sent to authorized connections; its wording makes navigation optional.
+No ARC-1 flat-file URI builder or destination-map header
+remains. Require a user-confirmed backend/client mapping; never infer it from a SID or bypass an
+ARC-1 denial. [Native acceptance and limits](research/ide-navigation-verification.md).
+
+Eclipse: `src/server/ide-links.ts` appends a separate, bounded text block after successful research
+dispatch. Preserve source/JSON, ignore arbitrary backend URIs, and avoid extra SAP requests. The real
+SID comes from config or the selected multi-target destination's `sap-sysid`, never its route alias.
+HTTP requires both `ARC1_IDE_LINKS=eclipse` and a request-local `Arc1-Ide-Client: eclipse` preference.
+Direct CLI exports stay undecorated. `src/cli-ide.ts` generates Eclipse fragments offline.
+Tests: `server/ide-*`, `handlers/dispatch-ide-links`, `cli/ide-setup`, and `cli/runtime`.
+
 ## Live relations verification
 
 From a repository checkout after `npm ci`:
@@ -83,6 +98,9 @@ use SAP's separate **Multi-Target Application** packaging terminology.
    [ADR-0008](adr/0008-opt-in-xsuaa-target-authorization.md), the
    [accepted spec](plans/xsuaa-target-authorization.md) and its linked implementation/live-validation
    record. These qualify only enforced mode; standard behavior must remain unchanged.
+   For scoped writes, read [ADR-0010](adr/0010-pinned-pp-multi-target-writes.md), its
+   [implementation contract](plans/2026-10-22-multi-target-pinned-writes.md), and the
+   [operator guide](../docs_page/multi-target-writes.md).
 2. At startup, `src/server/destination-discovery.ts` projects subaccount destinations into a
    secret-safe shape, `destination-registry.ts` validates them, and `server.ts`/`http.ts` create the
    pinned and aggregate HTTP factories.
@@ -100,7 +118,9 @@ use SAP's separate **Multi-Target Application** packaging terminology.
 ### Invariants
 
 - Default off; BTP CF only; XSUAA-only route auth; `ARC1_CACHE=none`; standard tool mode; UI,
-  plugins, shared cookies, writes, activation, and transport/Git mutation remain unavailable. PP
+  plugins and shared cookies remain unavailable. ADR-0010 permits only scoped CLAS/INTF writes and
+  whole-owner activation on explicitly enabled pinned PP targets with exact write grants; aggregate,
+  Copilot and Basic routes remain mutation-free. Transport/Git management remains unavailable. PP
   targets are strict per-user. Basic is a separate default-off shared identity, never fallback, and
   requires exactly one CF instance. ATC and ABAP Unit are available as workload-producing reads;
   operators can disable them with `SAP_DENY_ACTIONS`.
@@ -125,6 +145,10 @@ use SAP's separate **Multi-Target Application** packaging terminology.
 
 ### Change these together
 
+- Scoped pinned writes: `multi-target-write-surface.ts`, verified request projection/runtime config,
+  `src/adt/pinned-write-policy.ts`, `src/handlers/write/pinned{,-activation}.ts`, HTTP no-replay policy,
+  and focused `pinned-writes` / `multi-target-writes` tests. The low-level activation boundary must
+  require scoped validation; never let missing context select the legacy pipeline.
 - Destination properties/validation: `multi-target-destination-config.ts`,
   `multi-target-identity.ts`, `destination-discovery.ts`, `destination-registry.ts`,
   `multi-target-runtime.ts`, and their tests. Target syntax, pinned route matchers, aggregate pattern,
@@ -192,7 +216,7 @@ npm run btp:validate
 | Add FUNC structured parameters (#252) | `src/adt/fm-signature.ts` (`buildFmSignatureClause`/`parseFmSignature`/`spliceFmSignature`), `src/handlers/write.ts` + `src/handlers/read.ts` (splice signature into source on FUNC create+update when `args.parameters` set; `handleSAPRead` returns `{source, signature}` when `includeSignature`), `schemas.ts`/`tools.ts`. `FUNC` is excluded from `runPreWriteLint` LINTABLE_TYPES — abaplint can't parse source-based FM signatures. |
 | Add FUNC processing kind (normal / Remote-Enabled / update task) | `src/handlers/{schemas,tools}.ts` (strict creation-only fields), `src/handlers/write-helpers.ts` (creation envelope), `src/handlers/object-types.ts` (`functionModuleObjectUrl`), and `src/handlers/write/create.ts` (create shell → GET inactive root → locked metadata PUT → structural readback, shared by single + batch routing). Keep `objectBasePath('FUNC')` fail-closed: a FUNC URL always needs its parent group. The create POST deliberately carries NO processing attributes (SAP ignores them there and still makes a `normal` shell); the locked PUT is the only writer, and its media type is negotiated then stripped to the bare type (on-prem rejects `; charset=…`). Full lifecycle live-verified on 758 (v3) and 750 (v2). See [the research record](research/2026-07-28-func-processing-types.md). |
 | Modify CLAS include writes | `src/handlers/write/update-delete.ts` (`SAPWrite update` with `include=definitions|implementations|macros|testclasses`, parent-class lock + include URL PUT), `src/adt/crud.ts` (`safeUpdateClassInclude` — GET-probes the include and POST-creates it under the class lock when missing, e.g. fresh `testclasses`/CCAU), `src/adt/errors.ts` (`include-not-initialized` category), `schemas.ts`/`tools.ts`, tests. |
-| Modify package listing (`SAPRead type=DEVC`) | `src/adt/client.ts` (`getPackageContents` uses `informationsystem/search?packageName=...` GET; array API retained), `src/adt/package-contents.ts` (shared limit + completeness metadata), `src/handlers/read.ts`, `src/handlers/{schemas,tools}.ts`, tests. Default first block remains an array, second carries `listing`; structured is `{objects, listing}`. No total/continuation evidence; ADT search omits legacy types. See `docs/research/2026-09-14-package-completeness.md`. |
+| Modify package listing (`SAPRead type=DEVC`) | `src/adt/client.ts` (`getPackageContents`: indexed search; array API retained), `src/adt/{package-contents,package-browser}.ts`, `src/handlers/{read,schemas,tools,object-types}.ts`. `packageScope=direct` uses two bounded native tree reads and preserves exact folder selectors; never reuse it as authorization evidence. Both modes return array + `listing`, or structured `{objects, listing}`. See `docs/plans/2026-10-22-direct-package-browser.md`. |
 | Modify current object transport status (`history` legacy action name) | `src/adt/transport.ts` (`getObjectTransports`: current lock only), `src/adt/types.ts` (`ObjectTransportHistory`), `src/handlers/transport.ts` (`handleSAPTransport` case `history`: lock + assignment candidates, not complete history), `src/handlers/schemas.ts`, `src/handlers/tools.ts` |
 | Modify SAPTransport.create / transport target (TR_TARGET) / layer+target discovery | `src/adt/transport.ts` (`createTransportWithTarget` sets the explicit target via `tm:root`/`newrequest` `POST /cts/transportrequests` — the only ADT path that sets it; `CreateCorrectionRequest` at `/cts/transports` ignores `<TARGET>`. `supportsExplicitTransportTarget(http)` discovery-gates it: true iff `/cts/transportrequests` advertises `transportorganizer.v1+xml` — 7.58 yes, 7.50 no. `listTransportTargets`/`listTransportLayers` value-helps), `src/handlers/transport.ts` (`handleSAPTransport` create routing + `layers`/`targets` actions), `schemas.ts`/`tools.ts` (`target`/`transportLayer` params), `src/authz/policy.ts`, `src/adt/http.ts` (discovery accessors). Verified: a4h 7.58 sets target → 201; npl 7.50 gate fail-fast. |
 | Modify SAPTransport.check / transport preflight parsing | `src/adt/transport.ts` (`getTransportInfo` + `parseTransportInfo`), `src/handlers/transport.ts`, `src/handlers/{schemas,tools}.ts`, `tests/fixtures/xml/transport-check-*.xml` — live response is `REQUESTS/CTS_REQUEST/REQ_HEADER` plus `LOCKS/CTS_OBJECT_LOCK/LOCK_HOLDER`; `OPERATION=I` means create and empty means modify. Never use `KORRFLAG` alone: 7.50 returns `RECORDING=X` with it blank. Keep candidates bounded at the handler surface. Verified 750/758/816. |

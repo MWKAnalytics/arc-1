@@ -36,6 +36,8 @@ import type { CachingLayer } from '../cache/caching-layer.js';
 import { type RegistryEntry, type ToolDispatchContext, ToolRegistry } from '../registry/tool-registry.js';
 import { sanitizeArgs } from '../server/audit.js';
 import { generateRequestId, getCurrentContext, requestContext } from '../server/context.js';
+import { appendIdeLinks } from '../server/ide-links.js';
+import type { IdeLinkContext } from '../server/ide-request.js';
 import { logger } from '../server/logger.js';
 import { type McpRateLimiter, resolveRateLimitUserKey } from '../server/mcp-rate-limit.js';
 import { formatClientInfo } from '../server/trace-context.js';
@@ -213,6 +215,9 @@ function buildBaseErrorMessage(
   }
   if (err instanceof AdtResponseLimitError && err.endpointFamily === 'transport-review') {
     return `${message} The request inventory is too large for an automated review page; review it in SAP. This is an analysis limit, not a connectivity failure.`;
+  }
+  if (err instanceof AdtResponseLimitError && err.endpointFamily === 'package-browser') {
+    return `${message} Narrow with an advertised objectType or a smaller package. maxResults only caps returned entries, not SAP's response size. No listing was returned.`;
   }
   if (err instanceof AdtResponseLimitError) {
     const mebibytes = err.limitBytes / (1024 * 1024);
@@ -697,7 +702,8 @@ export function getToolRegistry(): ToolRegistry {
     if ('error' in expanded) return errorResult(expanded.error);
     return handleToolCall(
       ctx.client,
-      ctx.config,
+      // Decorate only after the outer audit too; IDE links are presentation, not audit evidence.
+      { ...ctx.config, ideLinks: 'off' },
       expanded.toolName,
       expanded.expandedArgs,
       ctx.authInfo,
@@ -838,6 +844,7 @@ export async function handleToolCall(
   postDispatchResult?: () => ToolResult | undefined,
   /** MCP caller cancellation; nested dispatch inherits it through RequestContext. */
   signal?: AbortSignal,
+  ideContext?: IdeLinkContext,
 ): Promise<ToolResult> {
   const reqId = requestId ?? generateRequestId();
   const start = Date.now();
@@ -1097,7 +1104,7 @@ export async function handleToolCall(
           resultPreview,
         });
 
-        return result;
+        return appendIdeLinks(result, toolName, args, config, ideContext);
       } catch (err) {
         if (err instanceof AdtError && err.creationOutcome === 'unknown') {
           try {

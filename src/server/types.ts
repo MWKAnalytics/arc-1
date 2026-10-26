@@ -8,6 +8,7 @@
  * 4. Defaults (all `allow*` flags false — restrictive by default)
  */
 
+import type { MultiTargetWritePolicy } from '../adt/safety.js';
 import { DEFAULT_USER_AGENT } from '../adt/user-agent.js';
 import type { MultiTargetAuthorizationMode } from './multi-target-authorization.js';
 
@@ -61,6 +62,7 @@ export interface ServerConfig {
   uiOpen: boolean;
 
   // --- Safety (positive opt-ins; defaults restrictive) ---
+  multiTargetWrite?: MultiTargetWritePolicy;
   allowWrites: boolean;
   allowDataPreview: boolean;
   allowFreeSQL: boolean;
@@ -117,6 +119,13 @@ export interface ServerConfig {
    * Positive values opt into expiry, clamped to `[60s, 90d]`. Only consulted
    * when XSUAA OAuth proxy mode is active. */
   oauthDcrTtlSeconds: number;
+  /** Allow new dynamic OAuth client registrations. Existing clients still require consent. */
+  oauthDcrEnabled: boolean;
+  /**
+   * Optional allowlist (redirect-URI globs) for dynamic client registration. Registration rejects
+   * other return addresses, and existing client_ids lose them. Unset keeps the library default.
+   */
+  oauthDcrRedirectUriPatterns?: string[];
 
   /**
    * Optional dedicated secret for HMAC-signing DCR `client_id`s. When set,
@@ -165,6 +174,11 @@ export interface ServerConfig {
   logFormat: 'text' | 'json';
   /** Hide SAP response details from client-facing tool errors while retaining server-side correlation data. */
   minimalErrors: boolean;
+
+  // --- IDE navigation (HTTP requires explicit per-request editor preferences) ---
+  ideLinks: 'off' | 'eclipse';
+  /** Configured real SAP SID for Eclipse navigation; multi-target runtimes use the selected target's SID. */
+  ideSystemId: string;
 
   // --- Tool Mode ---
   /** Tool mode: 'standard' (12 intent tools, SAPGit feature-gated) or 'hyperfocused' (1 universal SAP tool, ~200 tokens) */
@@ -300,6 +314,7 @@ export const DEFAULT_CONFIG: ServerConfig = {
   xsuaaAuth: false,
   allowHttpNoAuth: false,
   oidcDiscovery: true,
+  oauthDcrEnabled: true,
   oauthDcrTtlSeconds: 0, // 0 = never expire; positive opts into expiry (clamped 60s..90d) — see field JSDoc
   btpOAuthCallbackPort: 0,
   multiTargetEndpoints: false,
@@ -310,6 +325,8 @@ export const DEFAULT_CONFIG: ServerConfig = {
   ppStrictExplicit: false,
   ppAllowSharedCookies: false,
   disableSaml2: false,
+  ideLinks: 'off',
+  ideSystemId: '',
   toolMode: 'standard',
   schemaNullableOptionals: 'auto',
   plugins: [],

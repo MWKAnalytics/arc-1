@@ -380,6 +380,9 @@ See [XSUAA Setup](xsuaa-setup.md) for BTP Cockpit assignment steps.
 
 ### Opt-in multi-target grants
 
+[Scoped pinned PP writes](multi-target-writes.md) additionally require `MCPTargetDeveloper` with
+exact `arc1_write_targets`, raw write scope and destination/server consent. Admin is not a bypass.
+
 **Opt-in target authorization** adds a separate target boundary
 only when the deployment owner selects `ARC1_MULTI_TARGET_AUTHORIZATION=xsuaa-attribute`.
 Unset/`standard` means **standard access**, a supported choice where all readers may see/try the
@@ -485,9 +488,12 @@ or `C:/arc1/deny-actions.json`). For relative paths, use `./deny-actions.json`, 
 
 ARC-1 fails fast if a deny entry references an unknown tool/action, has invalid grammar, or points to an unreadable file. That is intentional: typoed security config should not silently start.
 
-Use intent-level deny rules (for example `SAPRead.PROG`) when a denial must cover both standard
+Use intent-level deny rules (for example `SAPRead.INCL`) when a denial must cover both standard
 and hyperfocused calls. A rule such as `SAP.read` applies only to the hyperfocused wrapper;
 direct intent calls are checked against the intent tool's rules.
+
+Denying `SAPRead.INCL` also denies include expansion for PROG, INCL and FUGR reads, including
+FUGR `grep` (which implies expansion); plain FUGR metadata reads remain allowed.
 
 ---
 

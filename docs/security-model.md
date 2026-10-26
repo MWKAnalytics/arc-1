@@ -104,6 +104,13 @@ Where: [`src/authz/policy.ts`](../src/authz/policy.ts) (`ACTION_POLICY`),
 Fails when: a new write path skips the package gate (see R4), or gates a user-supplied package
 instead of the resolved one, or package resolution fails *open*.
 
+For the scoped pinned multi-target path, require ADR-0010's additional conjunction before resolving
+PP: existing pinned route, global and destination write opt-ins, verified raw write scope, read
+access grant and exact write-target grant. Global and destination package/CTS rules are independent
+constraints, never replacement lists. Aggregate/Copilot and Basic routes cannot mutate. Carry an
+explicit enabled/disabled context into the ADT boundary; a missing context must not select legacy
+single-target writes. See [the implementation contract](plans/2026-10-22-multi-target-pinned-writes.md).
+
 ### I2 — Per-user isolation of anything cached or keyed
 Wherever SAP authorization differs per user, a cache or in-memory map must **either** key on a
 *verified, unique* user identity **or** still force a per-user SAP round-trip on every hit. Never
@@ -259,21 +266,55 @@ Added by the 2026-06-09 deep review (Track A/B). All verified in code; R8 verifi
 and already-created requests.** Single-target HTTP requests share a SAP transport, which is
 replaced for new requests once it is ten minutes old (monotonic elapsed time). Older requests
 keep their transport, including lock/save/unlock and late responses. Stdio's lifetime is unchanged.
-Per-user PP and multi-target transports remain request-local; both credential sanitizers discard
-injected transports. Factory tests cover these identity boundaries and rollover isolation.
+Per-user PP and multi-target transports never receive the shared transport; both credential
+sanitizers discard injected transports. Single-target PP through the Cloud Connector keeps a
+separate transport per exact `SAP-Connectivity-Authentication` JWT and route (OPS-06), capped at
+500 entries. New calls replace it at ten minutes or credential expiry, whichever comes first;
+reuse never extends that deadline. Each call invokes destination resolution, which can use the
+SAP SDK's per-user cache; this is not a fresh BTP authorization check. A changed
+credential or route gets a separate login (I2). Missing/opaque/expired credentials, the reserved
+proxy-token flow, OAuth2UserTokenExchange, SAMLAssertion and multi-target remain request-local.
+Factory and loopback-proxy tests cover isolation, expiry, failure and in-flight rollover.
 
 A replacement drops runtime cookies but reloads configured cookie credentials and retains the
 configured bearer provider. An unchanged SSO ticket or configured session cookie can authenticate
 without a new Basic password check. Existing requests may also outlive the transport-age limit.
 This is a reuse boundary, **not a ten-minute revocation guarantee**. SAP's idle timeout does not
 bound continuous use. Repeated fresh logons with stale configured credentials can also lock the
-technical account under SAP's policy; the concurrency limit is not a logon-rate limit.
+technical account under SAP's policy; the concurrency limit is not a logon-rate limit. For PP, a
+user locked or unmapped in SAP can keep an existing session for the rest of its transport age
+while presenting the same still-valid token; before this reuse, every call re-authenticated.
 
 **Status: partial mitigation; operator revocation procedure still required.** Follow the
 [rotation/revocation procedure](../docs_page/security-guide.md#shared-sap-login-lifetime-and-credential-rotation).
 The live cookie-precedence evidence on 758/816 does not establish the outcome of a real password
 change or user lock. Retiring transport objects prevents late responses from refilling the new
 jar; clearing an existing jar in place would not provide that isolation.
+
+### R23 — Scoped pinned multi-target mutation risks
+
+**High, mitigated by explicit gates; residual operational and authored-code risks accepted for this scope.**
+
+ADR-0010 introduces an explicit PP-only mutation surface under `SAP_ALLOW_WRITES`, destination
+opt-in, target-filtered XSUAA access and exact verified write grants. It supports CLAS/INTF main
+source writes and whole-owner activation, with independent package and canonical-request policy.
+Read-only defaults, aggregate/Copilot isolation, no shared-Basic writes and per-call drift checks
+remain structural. Source hashes, owning stateful locks, positive local/CTS evidence, bounded
+cleanup, no automatic mutation replay and positive activation-execution evidence protect the
+scoped lifecycle. [Qualification evidence](research/2026-10-22-multi-target-write-qualification.md)
+distinguishes live SAP checks from fault-injection tests and untested release shapes.
+
+Residual limits: one process shares availability; route/client identity does not isolate the
+cross-client ABAP repository; package rules do not sandbox the eventual behavior of authored ABAP;
+ABAP Unit can execute authored code under the SAP user (deny `SAPDiagnose.unittest` when unintended);
+activation includes preexisting drafts for the complete owner; an interrupted create/save may leave
+partial state. CTS allowance is deliberately parent-request-level, including its SAP-managed tasks.
+Audit delivery remains asynchronous. Removed IAM assignments may survive in old tokens/refresh
+sessions, so immediate disable uses server/destination policy and restart, and admitted calls may
+still complete. New backends require new public IDs and grants. Operators must assess these limits
+before enabling the feature; separate single-target applications remain the stronger availability
+and deployment-isolation option.
+
 
 ## 6. Per-PR security review checklist
 
@@ -333,7 +374,7 @@ if the change is *in* one of them.
   safety; shared holders carry no per-user data. [`src/adt/client.ts`](../src/adt/client.ts).
 - **CORS** — off by default; exact `Set.has` origin match with `credentials:true`; no wildcard.
 - **Per-user credential stripping** — `buildAdtConfig(...,{perUser:true})` strips
-  username/password/cookies; per-user cookie/CSRF jars are per-instance.
+  username/password/cookies; PP cookie/CSRF jars are isolated by the exact credential and route (R21).
 - **stdout discipline** — no `console.log` on the MCP path; all logging to stderr.
 
 ---
