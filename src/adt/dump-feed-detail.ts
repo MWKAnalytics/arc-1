@@ -28,11 +28,11 @@ import {
   stripHtmlTags,
   toSapStamp,
 } from './diagnostics.js';
-import { AdtApiError, AdtResponseLimitError } from './errors.js';
+import { AdtApiError } from './errors.js';
 import type { AdtHttpClient } from './http.js';
 import { checkOperation, OperationType, type SafetyConfig } from './safety.js';
 import type { DumpChapter, DumpDetail } from './types.js';
-import { findDeepNodes, parseXml, toRecordArray } from './xml-parser.js';
+import { parseXml, toRecordArray } from './xml-parser.js';
 
 /** Chapter anchors of SAP's summary, in its order. The titles are SAP's, in the logon language. */
 const SUMMARY_CHAPTERS = ['HEADER', 'WHATHAPPENED', 'ERROR', 'TERMINATION', 'SOURCE', 'STACK'];
@@ -44,13 +44,19 @@ const FEED_RESPONSE_LIMIT_BYTES = 4 * 1024 * 1024;
 const ZONE_SPREAD_MS = 14 * 3_600_000;
 
 const FEED_SUMMARY_NOTE =
-  'SAP has no ADT dump-detail resource on this system (SAP_BASIS 7.50); this is the summary from its dump feed. ' +
+  "The ADT detail resource was unavailable; this is the summary from SAP's dump feed. " +
   'Variable values, system fields and the other ST22 chapters are only in ST22.';
 
 const NOT_IN_FEED_HINT =
   'Hint: The dump feed does not list this dump either. On SAP_BASIS 7.50, which has no ADT dump-detail resource, ' +
   'ADT shows dumps only through that feed and only for the last 24 hours; open older dumps in ST22. ' +
   'On other releases the dump may have been deleted; list dumps again for a current id.';
+
+const INCOMPLETE_FEED_HINT =
+  'Hint: The dump-feed lookup was incomplete because it reached a limit or could not read or page the feed. ' +
+  'This does not show that the dump is gone; open it in ST22.';
+
+type FeedLookup = { status: 'found'; detail: DumpDetail } | { status: 'absent' | 'incomplete' };
 
 /**
  * Read a dump's detail. Where SAP answers the detail resource with 404, the detail is rebuilt
@@ -66,10 +72,11 @@ export async function getDumpWithFeedFallback(
   } catch (err) {
     if (!(err instanceof AdtApiError) || err.statusCode !== 404) throw err;
     const wanted = normalizeDumpId(dumpId);
-    if (!/^\d{14}\S/.test(wanted)) throw err;
-    const detail = await findDumpInFeed(http, safety, dumpId, wanted);
-    if (detail) return detail;
-    err.extraHint = err.extraHint ? `${err.extraHint}\n${NOT_IN_FEED_HINT}` : NOT_IN_FEED_HINT;
+    if (!/^\d{14}\S/.test(wanted) || Number.isNaN(sapStampToDate(wanted.slice(0, 14)).getTime())) throw err;
+    const result = await findDumpInFeed(http, safety, dumpId, wanted);
+    if (result.status === 'found') return result.detail;
+    const hint = result.status === 'incomplete' ? INCOMPLETE_FEED_HINT : NOT_IN_FEED_HINT;
+    err.extraHint = err.extraHint ? `${err.extraHint}\n${hint}` : hint;
     throw err;
   }
 }
@@ -86,10 +93,9 @@ async function findDumpInFeed(
   safety: SafetyConfig,
   dumpId: string,
   wanted: string,
-): Promise<DumpDetail | undefined> {
+): Promise<FeedLookup> {
   checkOperation(safety, OperationType.Read, 'ListDumps');
   const stamp = sapStampToDate(wanted.slice(0, 14)).getTime();
-  if (Number.isNaN(stamp)) return undefined;
 
   // The id is date, time and host, then user, client and number. The user narrows the feed
   // whenever it stands apart; a host that fills its 32 characters runs into the user.
@@ -104,31 +110,41 @@ async function findDumpInFeed(
 
   for (let page = 0; page < MAX_FEED_PAGES; page++) {
     const query = buildFeedQueryString({ user, from, to, maxResults: FEED_PAGE_SIZE }, FEED_PAGE_SIZE, 'user');
-    let body: string;
-    try {
-      const resp = await http.get(
-        `/sap/bc/adt/runtime/dumps${query}`,
-        { Accept: 'application/atom+xml;type=feed' },
-        request,
-      );
-      body = resp.body;
-    } catch (err) {
-      // The lookup is bounded; a dump beyond the bound counts as not listed.
-      if (err instanceof AdtResponseLimitError) return undefined;
-      throw err;
-    }
+    const resp = await http.get(
+      `/sap/bc/adt/runtime/dumps${query}`,
+      { Accept: 'application/atom+xml;type=feed' },
+      request,
+    );
 
-    const entries = findDeepNodes(parseXml(body), 'entry');
-    const match = entries.find((entry) => normalizeDumpId(extractDumpId(entry)) === wanted);
-    if (match) return parseDumpFeedEntry(match, dumpId);
-    if (entries.length < FEED_PAGE_SIZE) return undefined;
+    const parsed = parseXml(resp.body);
+    const feed = parsed.feed;
+    if (!Object.hasOwn(parsed, 'feed') || (feed !== '' && (!feed || typeof feed !== 'object')))
+      return { status: 'incomplete' };
+    const rawEntries = (feed as Record<string, unknown>).entry;
+    const entries = toRecordArray(rawEntries);
+    if (rawEntries !== undefined && (!Array.isArray(rawEntries) || entries.length !== rawEntries.length))
+      return { status: 'incomplete' };
+    // Only identity fields count; a URL in a summary is not the entry's identity.
+    const ids = entries.map(({ id, link }) => normalizeDumpId(extractDumpId({ id, link })));
+    const match = entries[ids.indexOf(wanted)];
+    if (match) {
+      const detailLinks = toRecordArray(match.link).filter((link) =>
+        String(link['@_href'] ?? '').includes('/runtime/dump/'),
+      );
+      const canonicalId = extractDumpId({ link: detailLinks });
+      if (canonicalId) return { status: 'found', detail: await getDump(http, safety, canonicalId) };
+      const detail = parseDumpFeedEntry(match, dumpId);
+      return detail.chapters.length ? { status: 'found', detail } : { status: 'incomplete' };
+    }
+    if (ids.some((id) => !id)) return { status: 'incomplete' };
+    if (entries.length < FEED_PAGE_SIZE) return { status: 'absent' };
 
     // Newest first: continue from the oldest entry seen. The bound is inclusive, so it repeats once.
     const oldest = Date.parse(String(entries.at(-1)?.published ?? entries.at(-1)?.updated ?? ''));
-    if (Number.isNaN(oldest) || toSapStamp(new Date(oldest)) === to) return undefined;
+    if (Number.isNaN(oldest) || toSapStamp(new Date(oldest)) >= to) return { status: 'incomplete' };
     to = toSapStamp(new Date(oldest));
   }
-  return undefined;
+  return { status: 'incomplete' };
 }
 
 /** Build a dump detail from a feed entry's HTML summary (the SAP_BASIS 7.50 layout). */

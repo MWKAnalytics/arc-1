@@ -68,4 +68,27 @@ describe('SAPDiagnose dump detail without an ADT dump-detail resource (SAP_BASIS
     expect(text).toContain('last 24 hours');
     expect(text).not.toContain('not found</html>');
   });
+
+  it('reports incomplete feed lookup with minimal errors', async () => {
+    mock750('<feed><entry><title>Unreadable dump identity</title></entry></feed>');
+    const result = await call({ id: DUMP_ID }, { ...DEFAULT_CONFIG, minimalErrors: true });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('incomplete');
+    expect(result.content[0]!.text).not.toContain('does not list');
+  });
+
+  it('reports the response limit with minimal errors', async () => {
+    mock750(' '.repeat(4 * 1024 * 1024 + 1));
+    const result = await call({ id: DUMP_ID }, { ...DEFAULT_CONFIG, minimalErrors: true });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('DATA_RESPONSE_TOO_LARGE');
+    expect(result.content[0]!.text).not.toContain('status 404');
+  });
+
+  it('refuses a denied dump action before any detail or feed request', async () => {
+    mock750();
+    const result = await call({ id: DUMP_ID }, { ...DEFAULT_CONFIG, denyActions: ['SAPDiagnose.dumps'] });
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
 });

@@ -6,6 +6,7 @@ import { AdtApiError, AdtResponseLimitError } from '../../../src/adt/errors.js';
 import type { AdtHttpClient } from '../../../src/adt/http.js';
 import { unrestrictedSafetyConfig } from '../../../src/adt/safety.js';
 import { findDeepNodes, parseXml } from '../../../src/adt/xml-parser.js';
+import { requestContext } from '../../../src/server/context.js';
 
 const FIXTURES_DIR = join(__dirname, '../../fixtures/xml');
 // NW 7.50 feed: no self link to /runtime/dump/{id}, ids under /vit/ (SAP GUI), HTML summary per entry.
@@ -36,6 +37,13 @@ const feedCalls = (http: AdtHttpClient) =>
 
 // Newest first: [0] a dump during program generation, [1] a runtime error in a report.
 const ENTRIES = findDeepNodes(parseXml(FEED_750), 'entry');
+
+function fullPage(published: string): string {
+  return `<feed>${Array.from(
+    { length: 50 },
+    (_, i) => `<entry><id>/runtime/dump/other${i}</id><published>${published}</published></entry>`,
+  ).join('')}</feed>`;
+}
 
 describe('parseDumpFeedEntry', () => {
   const detail = parseDumpFeedEntry(ENTRIES[1]!, DUMP_ID);
@@ -177,12 +185,74 @@ describe('getDumpWithFeedFallback', () => {
     expect(err.extraHint).toContain('ST22');
   });
 
-  it('treats a lookup beyond its response bound as not listed', async () => {
-    const http = http750(new AdtResponseLimitError(4 * 1024 * 1024, 5 * 1024 * 1024, 'dumps'));
+  it('propagates the byte limit rather than reporting an absent dump', async () => {
+    const limit = new AdtResponseLimitError(4 * 1024 * 1024, 5 * 1024 * 1024, 'dumps');
+    const http = http750(limit);
+    await expect(getDumpWithFeedFallback(http, unrestrictedSafetyConfig(), DUMP_ID)).rejects.toBe(limit);
+  });
+
+  it.each([
+    ['page limit', [8, 7, 6, 5].map((hour) => fullPage(`2026-10-24T0${hour}:00:00Z`)), 4],
+    ['stalled cursor', [fullPage('2026-10-24T08:00:00Z')], 2],
+    ['unreadable cursor', [fullPage('not a date')], 1],
+    ['non-feed response', ['<html>Log on</html>'], 1],
+    ['entry without identity', ['<feed><entry><title>Dump</title></entry></feed>'], 1],
+    ['entry without summary', [`<feed><entry><id>/runtime/dumps/${DUMP_ID}</id></entry></feed>`], 1],
+  ])('reports an incomplete lookup for %s', async (_label, pages, expectedCalls) => {
+    const http = http750(...pages);
     const err = await getDumpWithFeedFallback(http, unrestrictedSafetyConfig(), DUMP_ID).catch((e) => e);
     expect(err).toBeInstanceOf(AdtApiError);
     expect(err.statusCode).toBe(404);
-    expect(err.extraHint).toContain('last 24 hours');
+    expect(err.extraHint).toContain('incomplete');
+    expect(err.extraHint).toContain('ST22');
+    expect(err.extraHint).not.toContain('does not list');
+    expect(feedCalls(http)).toHaveLength(expectedCalls);
+  });
+
+  it('uses the canonical detail link for a modern feed match', async () => {
+    const id = decodeURIComponent(DUMP_ID).replace(/\s+/g, ' ');
+    const canonicalPath = `/sap/bc/adt/runtime/dump/${DUMP_ID}`;
+    const http = {
+      get: vi.fn().mockImplementation(async (path: string) => {
+        if (path === canonicalPath || path === `${canonicalPath}/formatted`)
+          return { body: path.endsWith('/formatted') ? 'Full dump' : '<dump:dump error="MODERN"/>' };
+        if (path.startsWith('/sap/bc/adt/runtime/dumps'))
+          return { body: `<feed><entry><link rel="self" href="${canonicalPath}"/></entry></feed>` };
+        throw notFound(path);
+      }),
+    } as unknown as AdtHttpClient;
+    const detail = await getDumpWithFeedFallback(http, unrestrictedSafetyConfig(), id);
+    expect(detail.error).toBe('MODERN');
+    expect(detail.formattedText).toBe('Full dump');
+    expect(detail.origin).toBeUndefined();
+    expect(feedCalls(http)).toHaveLength(1);
+  });
+
+  it('does not mistake another user, client or dump number for the requested dump', async () => {
+    for (const id of [DUMP_ID.replace('DEVELOPER', 'OTHER'), DUMP_ID.replace('001', '002'), `${DUMP_ID}3`]) {
+      const err = await getDumpWithFeedFallback(http750(FEED_750), unrestrictedSafetyConfig(), id).catch((e) => e);
+      expect(err).toBeInstanceOf(AdtApiError);
+      expect(err.statusCode).toBe(404);
+    }
+  });
+
+  it('propagates feed authorization and cancellation errors', async () => {
+    for (const error of [new AdtApiError('Forbidden', 403, '/runtime/dumps', ''), new Error('cancelled')]) {
+      await expect(getDumpWithFeedFallback(http750(error), unrestrictedSafetyConfig(), DUMP_ID)).rejects.toBe(error);
+    }
+  });
+
+  it('shares one byte budget and the caller signal across pages', async () => {
+    const http = http750(fullPage('2026-10-24T08:00:00Z'), FEED_750);
+    const signal = new AbortController().signal;
+    await requestContext.run({ requestId: 'dump-test', signal }, () =>
+      getDumpWithFeedFallback(http, unrestrictedSafetyConfig(), DUMP_ID),
+    );
+    const calls = (http.get as ReturnType<typeof vi.fn>).mock.calls.filter(([path]) => path.includes('/runtime/dumps'));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]![2].signal).toBe(signal);
+    expect(calls[0]![2].responseBudget.limitBytes).toBe(4 * 1024 * 1024);
+    expect(calls[1]![2].responseBudget).toBe(calls[0]![2].responseBudget);
   });
 
   it('does not search the feed for ids that are no dump key', async () => {

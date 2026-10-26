@@ -454,4 +454,7 @@ gateway error log uses the same layout, so its HTML helpers are reused. The 7.50
 `from` to now minus 24 hours (`compute_timestamp_from`), so older dumps are not listed and the 404
 stands with a hint. Dump ids carry SAP system time while the feed bounds are UTC: the lookup queries
 14 hours either way, filtered to the id's user, and compares ids by field because padding and
-encoding vary. Tests: `tests/unit/{adt,handlers}/dump-feed-detail.test.ts`.
+encoding vary. A matching entry with a modern detail link is read through that canonical id.
+The fallback stops at four pages or 4 MiB. Incomplete pages, stalled paging and unreadable summaries
+must not become "dump absent"; byte-limit and authorization errors propagate.
+Tests: `tests/unit/{adt,handlers}/dump-feed-detail.test.ts`.
