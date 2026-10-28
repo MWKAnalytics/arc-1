@@ -945,21 +945,13 @@ export class AdtHttpClient {
     return withoutQuery.endsWith('/') && withoutQuery.length > 1 ? withoutQuery.slice(0, -1) : withoutQuery;
   }
 
+  /**
+   * Negotiated headers apply to the exact resource only. Sub-resources (`/source/main`,
+   * `/objectstructure`, `/versions`, `/variants`, `/includes/…`) serve their own media types, so a type
+   * negotiated for an object's metadata must not be sent to them; discovery already stops at one level.
+   */
   private resolveNegotiatedHeaders(path: string): { accept?: string; contentType?: string } | undefined {
-    let matched: { accept?: string; contentType?: string } | undefined;
-    let matchedPathLength = -1;
-
-    for (const [prefix, headers] of this.negotiatedHeaders.entries()) {
-      const isExact = path === prefix;
-      const isChild = path.startsWith(`${prefix}/`);
-      if (!isExact && !isChild) continue;
-      if (prefix.length > matchedPathLength) {
-        matched = headers;
-        matchedPathLength = prefix.length;
-      }
-    }
-
-    return matched;
+    return this.negotiatedHeaders.get(path);
   }
 
   private notifyUnauthorized(path: string): void {
