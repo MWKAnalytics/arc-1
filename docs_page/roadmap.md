@@ -958,11 +958,12 @@ positive match. [Original finding](https://github.com/arc-mcp/arc-1/blob/5725fab
 - **Priority / effort / status:** P3 / S / Needs environment
 - **Category:** Diagnostics
 
-**Remaining gap.** Dump lists from a known SAP_BASIS release below 7.53 carry a note when the older
-feed handler may have cut them to 24 hours. The class per release comes from SAP Note correction
+**Remaining gap.** Dump lists from a SAP_BASIS release below 7.53 carry a note when the older feed
+handler may have cut them to 24 hours. The class per release comes from SAP Note correction
 instructions; the window itself was read on 7.50 (24 hours) and 7.58 (2000 days) only. 7.31, 7.40,
 7.51 and 7.52 run the same older class, and 7.53–7.57 and 8.16 the newer one, unverified. A target
-whose release ARC-1 has not detected gets no note.
+that reports its release neither to the probe nor to the caller's own read, and has no
+`SAP_ABAP_RELEASE`, gets no note.
 
 **Resume with.** A target on one of those releases: read the `compute_timestamp_from` call in its
 dump feed handler, or list dumps older than one day and compare with ST22. Adjust the release
