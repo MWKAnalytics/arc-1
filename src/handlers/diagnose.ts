@@ -55,6 +55,7 @@ import {
   setSqlTraceState,
 } from '../adt/diagnostics.js';
 import { getDumpWithFeedFallback } from '../adt/dump-feed-detail.js';
+import { dayLimitedDumpListNote, feedUpdatedAt } from '../adt/dump-list-window.js';
 import { AdtApiError, AdtNetworkError } from '../adt/errors.js';
 import { type FeedFilter, readDumpFeedSchema } from '../adt/feed-schema.js';
 import { internalOperationDenial } from '../adt/internal-data-operations.js';
@@ -69,7 +70,7 @@ import type {
 } from '../adt/types.js';
 import { getCurrentContext } from '../server/context.js';
 import { handleCiQuality } from './diagnose-ci.js';
-import { isBtpSystem } from './feature-cache.js';
+import { getCachedFeatures, isBtpSystem } from './feature-cache.js';
 import { classIncludeUrl, normalizeObjectType, objectUrlForType, sourceUrlForType } from './object-types.js';
 import { errorResult, type ToolResult, textResult, toolJson } from './shared.js';
 import { handleSyntaxCheck } from './syntax.js';
@@ -1057,14 +1058,23 @@ export async function handleSAPDiagnose(
       const maxResults = args.maxResults ? Number(args.maxResults) : undefined;
       const from = args.from as string | undefined;
       const to = args.to as string | undefined;
+      let feedClock: Date | undefined;
       const dumps = await listDumps(client.http, client.safety, {
         user,
         maxResults,
         from,
         to,
         filters: args.filters as FeedFilter[] | undefined,
+        onFirstPage: (body) => {
+          feedClock = feedUpdatedAt(body);
+        },
       });
-      return textResult(toolJson(dumps));
+      const result = textResult(toolJson(dumps));
+      // The list stays a plain array; the window note is a separate text block after it.
+      const abapRelease = getCachedFeatures()?.abapRelease;
+      const note = dayLimitedDumpListNote({ abapRelease, from, to, feedClock, empty: dumps.length === 0 });
+      if (note) result.content.push({ type: 'text', text: note });
+      return result;
     }
     case 'traces': {
       const id = args.id as string | undefined;
