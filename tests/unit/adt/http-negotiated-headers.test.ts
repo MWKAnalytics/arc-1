@@ -145,6 +145,18 @@ describe.each(modes)('exact negotiated resource: $name', (mode) => {
     expect(headers()[mode.header]).toBe(mode.fallback);
   });
 
+  it('uses object discovery after a collection-level negotiation', async () => {
+    const http = await client();
+    const collection = '/sap/bc/adt/oo/classes';
+    const metadataType = 'application/vnd.sap.adt.oo.classes.v4+xml';
+    http.setDiscoveryMap(new Map([[collection, [metadataType]]]));
+    await negotiate(http, collection);
+    await mode.request(http, collection);
+    expect(headers()[mode.header]).toBe('application/xml');
+    await mode.request(http, root);
+    expect(headers()[mode.header]).toBe(metadataType);
+  });
+
   it('copies exact entries into stateful sessions without copying session negotiations back', async () => {
     const http = await client();
     await negotiate(http, root);
