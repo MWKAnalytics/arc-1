@@ -27,6 +27,10 @@ Compared with main `721755d51b9fa955becc50673f420eb3916c69f9`:
   checks passed (293 tests); additional collection and #996 checks passed (32 tests).
 - Typecheck, Biome, policy validation, build and size/schema budgets passed. Biome reports two
   existing informational style suggestions outside this change. Tool-definition fixtures unchanged.
+- Claude Code 2.1.308 / `claude-opus-5-5`, maximum effort, reviewed the plan and final patch and
+  found no production correctness or regression issue. Its final test suggestion was applied:
+  child discovery now distinguishes a cached wildcard from an uncached default. All 22 affected
+  tests and typecheck passed after that adjustment; main still produces 12 failures.
 
 An earlier full run passed 10,312 tests and timed out after 10 seconds in the untouched OIDC
 metadata challenge test. All seven tests in that file passed in isolation; the subsequent full run

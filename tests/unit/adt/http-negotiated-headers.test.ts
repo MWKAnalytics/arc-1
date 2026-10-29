@@ -86,6 +86,7 @@ describe.each(modes)('exact negotiated resource: $name', (mode) => {
 
   it('keeps parent and child negotiations independent in both directions', async () => {
     const http = await client();
+    http.setDiscoveryMap(new Map([[source, ['text/plain']]]));
     await negotiate(http, root);
     await negotiate(http, source, 'application/xml');
     const childType = mode.status === 406 ? '*/*' : 'application/*';
@@ -95,7 +96,7 @@ describe.each(modes)('exact negotiated resource: $name', (mode) => {
     await mode.request(http, `${source}?version=inactive`);
     expect(headers()[mode.header]).toBe(childType);
     await mode.request(http, `${source}/versions`);
-    expect(headers()[mode.header]).toBe(mode.fallback);
+    expect(headers()[mode.header]).toBe('text/plain');
     await mode.request(http, `${root}/objectstructure`);
     expect(headers()[mode.header]).toBe(mode.fallback);
   });

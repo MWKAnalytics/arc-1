@@ -185,10 +185,10 @@ it.each([406, 415])(
     };
     const first = pool.client(config, 'PP');
     if (status === 415) await first.client.http.fetchCsrfToken();
-    const seen: Array<{ path: string; media: string | undefined }> = [];
+    const seen: Array<string | undefined> = [];
     sap.custom.reply = (req, res) => {
       const media = status === 406 ? req.headers.accept : req.headers['content-type'];
-      seen.push({ path: req.url ?? '', media });
+      seen.push(media);
       res.setHeader('x-csrf-token', 'T');
       res.statusCode = media === 'application/custom+xml' ? status : 200;
       res.end('ok');
@@ -199,21 +199,21 @@ it.each([406, 415])(
         ? client.http.get(path, explicit ? { Accept: explicit } : undefined)
         : client.http.put(path, '<metadata/>', explicit);
     await request(first.client, root, 'application/custom+xml');
-    expect(seen.map(({ media }) => media)).toEqual(['application/custom+xml', 'application/xml']);
+    expect(seen).toEqual(['application/custom+xml', 'application/xml']);
 
     const next = pool.client(config, 'PP');
     expect(next.transportReuse).toBe('pooled-reused');
     expect(next.client).not.toBe(first.client);
     expect(next.client.http).toBe(first.client.http);
     await request(next.client, `${root}?version=inactive`);
-    expect(seen.at(-1)?.media).toBe('application/xml');
+    expect(seen.at(-1)).toBe('application/xml');
     await request(next.client, `${root}/source/main`);
-    expect(seen.at(-1)?.media).toBe(status === 406 ? '*/*' : undefined);
+    expect(seen.at(-1)).toBe(status === 406 ? '*/*' : undefined);
 
     const other = pool.client({ ...config, sapConnectivityAuth: `Bearer ${userToken('bob')}` }, 'PP');
     expect(other.transportReuse).toBe('pooled-new');
     await request(other.client, root);
-    expect(seen.at(-1)?.media).toBe(status === 406 ? '*/*' : undefined);
+    expect(seen.at(-1)).toBe(status === 406 ? '*/*' : undefined);
   },
 );
 
