@@ -859,7 +859,7 @@ export class AdtHttpClient {
           if (retryContentType !== currentContentType) {
             negotiated.contentType = retryContentType;
           }
-          // Never cache into the source subtree; costs one extra round trip per matching legacy call.
+          // Keep the #907 legacy fallback uncached; only successful 406/415 results are reusable.
           if (!legacyFallback && (negotiated.accept || negotiated.contentType)) {
             this.negotiatedHeaders.set(negotiationKey, negotiated);
           }
@@ -946,9 +946,8 @@ export class AdtHttpClient {
   }
 
   /**
-   * Negotiated headers apply to the exact resource only. Sub-resources (`/source/main`,
-   * `/objectstructure`, `/versions`, `/variants`, `/includes/…`) serve their own media types, so a type
-   * negotiated for an object's metadata must not be sent to them; discovery already stops at one level.
+   * Negotiated headers apply only to the exact normalized resource. Metadata media types must not
+   * override source, structure or version resources, which use their own negotiation or discovery.
    */
   private resolveNegotiatedHeaders(path: string): { accept?: string; contentType?: string } | undefined {
     return this.negotiatedHeaders.get(path);
